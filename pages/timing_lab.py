@@ -4,8 +4,10 @@ from sqlalchemy import create_engine, text
 import urllib.parse
 import plotly.express as px
 
+# ========== 1. 頁面配置 ==========
 st.set_page_config(page_title="公告行為研究室 | StockRevenueLab", layout="wide")
 
+# ========== 2. 安全資料庫連線 ==========
 @st.cache_resource
 def get_engine():
     try:
@@ -19,19 +21,23 @@ def get_engine():
         st.error("❌ 連線失敗")
         st.stop()
 
+# ========== 3. 核心標題 ==========
 st.title("🕵️ 營收公告行為研究室 2.0")
 
+# --- 側邊欄控制 ---
 with st.sidebar:
     st.header("🔬 策略參數")
     target_year = st.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)], index=1)
     study_metric = st.radio("成長指標", ["yoy_pct", "mom_pct"])
     threshold = st.slider(f"設定 {study_metric} 爆發門檻 %", 30, 300, 100)
-    search_remark = st.text_input("🔍 關鍵字搜尋 (如: 訂單, 日本, 認列)", "")
+    search_remark = st.text_input("🔍 關鍵字搜尋 (如: 訂單, 日本, 認列, 工案)", "")
 
+# --- 核心 SQL：修正數值顯示位數 ---
 @st.cache_data(ttl=3600)
 def fetch_timing_data(year, metric_col, limit, keyword):
     engine = get_engine()
     minguo_year = int(year) - 1911
+    
     query = f"""
     WITH raw_events AS (
         SELECT stock_id, stock_name, report_month, {metric_col}, remark,
@@ -60,8 +66,9 @@ def fetch_timing_data(year, metric_col, limit, keyword):
     final_detail AS (
         SELECT 
             e.stock_id, e.stock_name, e.report_month, 
-            ROUND(e.{metric_col}::numeric, 1) as growth_val, -- 營收縮減至 1 位
+            ROUND(e.{metric_col}::numeric, 1) as growth_val, -- 營收成長留 1 位
             e.remark,
+            -- 股價漲跌幅統一留 2 位
             ROUND(AVG(CASE WHEN c.date >= e.base_date - interval '9 days' AND c.date <= e.base_date - interval '3 days' THEN c.weekly_ret END)::numeric, 2) as pre_week,
             ROUND(AVG(CASE WHEN c.date > e.base_date - interval '3 days' AND c.date <= e.base_date + interval '4 days' THEN c.weekly_ret END)::numeric, 2) as announce_week,
             ROUND(AVG(CASE WHEN c.date > e.base_date + interval '4 days' AND c.date <= e.base_date + interval '11 days' THEN c.weekly_ret END)::numeric, 2) as after_week_1,
@@ -78,21 +85,25 @@ def fetch_timing_data(year, metric_col, limit, keyword):
 df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
 
 if not df.empty:
+    # --- 統計看板 ---
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("初號機樣本", f"{len(df)} 檔")
-    c2.metric("T-1周平均", f"{df['pre_week'].mean():.2f}%")
-    c3.metric("主力預跑機率", f"{(df['pre_week'] > 2.5).sum() / len(df) * 100:.1f}%")
+    c2.metric("預跑平均漲幅", f"{df['pre_week'].mean():.2f}%")
+    c3.metric("主力預跑機率", f"{(df['pre_week'] > 2).sum() / len(df) * 100:.1f}%")
     c4.metric("利多出盡機率", f"{(df['after_month'] < df['pre_week']).sum() / len(df) * 100:.1f}%")
 
     st.write("---")
+    
+    # --- 趨勢圖表 ---
     plot_df = pd.DataFrame({
-        "階段": ["T-1周(預跑)", "T周(公告)", "T+1周", "一個月後"],
+        "階段": ["前一周(T-1)", "公告周(T)", "後一周(T+1)", "一個月後"],
         "平均報酬 %": [df['pre_week'].mean(), df['announce_week'].mean(), df['after_week_1'].mean(), df['after_month'].mean()]
     })
     fig = px.bar(plot_df, x="階段", y="平均報酬 %", color="平均報酬 %", color_continuous_scale="RdYlGn", text_auto=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("🏆 符合門檻個股清單")
+    # --- 個股清單 ---
+    st.subheader("🏆 符合門檻個股表現清單")
     display_df = df.rename(columns={
         "stock_id": "代號", "stock_name": "名稱", "report_month": "月份",
         "growth_val": f"{study_metric}%", "pre_week": "T-1周%",
