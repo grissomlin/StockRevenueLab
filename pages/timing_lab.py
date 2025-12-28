@@ -21,13 +21,13 @@ def get_engine():
         st.error("❌ 資料庫連線失敗")
         st.stop()
 
-# ========== 3. 核心標題與邏輯說明 ==========
+# ========== 3. 核心標題 ==========
 st.title("🕵️ 營收公告行為研究室 2.0")
 
 with st.expander("📝 研究邏輯與名詞定義（必讀）"):
     st.markdown("""
-    * **初號機邏輯 (First Spark)**：自動過濾掉已經噴發多月的股票。系統會判定「上個月指標未達標，本月突然噴發」的公司。
-    * **T-1 周 (主力預跑)**：每月 1~7 號。此時報表尚未公布。
+    * **初號機邏輯 (First Spark)**：判定「上個月營收未達標，本月突然噴發」的公司。
+    * **T-1 周 (主力預跑)**：每月 1~7 號。此時報表尚未公布，觀察是否有主力提前卡位。
     * **T 周 (消息噴發)**：每月 8~14 號。包含法定公告基準日 10 號。
     * **T+1 周與後一個月**：觀察消息公佈後的延續性。
     """)
@@ -36,12 +36,13 @@ with st.expander("📝 研究邏輯與名詞定義（必讀）"):
 with st.sidebar:
     st.header("🔬 策略參數")
     target_year = st.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)], index=1)
-    study_metric = st.radio("成長指標", ["yoy_pct", "mom_pct"], help="yoy為年增率，mom為月增率")
+    study_metric = st.radio("成長指標", ["yoy_pct", "mom_pct"])
     threshold = st.slider(f"設定 {study_metric} 爆發門檻 %", 30, 300, 100)
-    
-# --- 核心 SQL：修正聚合邏輯 ---
+    search_remark = st.text_input("🔍 備註關鍵字搜尋 (如: 交屋, 中油, 認列)", "")
+
+# --- 核心 SQL：簡化數值與初號機邏輯 ---
 @st.cache_data(ttl=3600)
-def fetch_timing_data(year, metric_col, limit):
+def fetch_timing_data(year, metric_col, limit, keyword):
     engine = get_engine()
     minguo_year = int(year) - 1911
     
@@ -62,6 +63,7 @@ def fetch_timing_data(year, metric_col, limit):
         WHERE {metric_col} >= {limit} 
           AND (prev_metric < {limit} OR prev_metric IS NULL)
           AND report_month LIKE '{minguo_year}_%'
+          AND (remark LIKE '%%{keyword}%%' OR stock_name LIKE '%%{keyword}%%')
     ),
     weekly_calc AS (
         SELECT symbol, date, w_close,
@@ -71,11 +73,13 @@ def fetch_timing_data(year, metric_col, limit):
     ),
     final_detail AS (
         SELECT 
-            e.stock_id, e.stock_name, e.report_month, e.{metric_col} as growth_val, e.remark,
-            AVG(CASE WHEN c.date >= e.base_date - interval '9 days' AND c.date <= e.base_date - interval '3 days' THEN c.weekly_ret END) as pre_week,
-            AVG(CASE WHEN c.date > e.base_date - interval '3 days' AND c.date <= e.base_date + interval '4 days' THEN c.weekly_ret END) as announce_week,
-            AVG(CASE WHEN c.date > e.base_date + interval '4 days' AND c.date <= e.base_date + interval '11 days' THEN c.weekly_ret END) as after_week_1,
-            AVG(CASE WHEN c.date > e.base_date + interval '11 days' AND c.date <= e.base_date + interval '30 days' THEN c.weekly_ret END) as after_month
+            e.stock_id, e.stock_name, e.report_month, 
+            ROUND(e.{metric_col}::numeric, 1) as growth_val, 
+            e.remark,
+            ROUND(AVG(CASE WHEN c.date >= e.base_date - interval '9 days' AND c.date <= e.base_date - interval '3 days' THEN c.weekly_ret END)::numeric, 2) as pre_week,
+            ROUND(AVG(CASE WHEN c.date > e.base_date - interval '3 days' AND c.date <= e.base_date + interval '4 days' THEN c.weekly_ret END)::numeric, 2) as announce_week,
+            ROUND(AVG(CASE WHEN c.date > e.base_date + interval '4 days' AND c.date <= e.base_date + interval '11 days' THEN c.weekly_ret END)::numeric, 2) as after_week_1,
+            ROUND(AVG(CASE WHEN c.date > e.base_date + interval '11 days' AND c.date <= e.base_date + interval '30 days' THEN c.weekly_ret END)::numeric, 2) as after_month
         FROM spark_events e
         JOIN weekly_calc c ON e.stock_id = SPLIT_PART(c.symbol, '.', 1)
         GROUP BY e.stock_id, e.stock_name, e.report_month, e.{metric_col}, e.remark, e.base_date
@@ -85,17 +89,15 @@ def fetch_timing_data(year, metric_col, limit):
     with engine.connect() as conn:
         return pd.read_sql_query(text(query), conn)
 
-df = fetch_timing_data(target_year, study_metric, threshold)
+df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
 
 if not df.empty:
     # --- A. 統計看板 ---
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("初號機爆發樣本", f"{len(df)} 檔")
-    c2.metric("公告前預跑均值", f"{df['pre_week'].mean():.2f}%")
+    c1.metric("初號機樣本數", f"{len(df)} 檔")
+    c2.metric("T-1周平均漲幅", f"{df['pre_week'].mean():.2f}%")
     
-    # 計算機率：預跑 > 3% 的比例
-    pre_run_prob = (df['pre_week'] > 3).sum() / len(df) * 100
-    # 計算機率：公告後一個月表現不如公告前一周 (利多出盡)
+    pre_run_prob = (df['pre_week'] > 2).sum() / len(df) * 100
     post_drop_prob = (df['after_month'] < df['pre_week']).sum() / len(df) * 100
     
     c3.metric("主力預跑機率", f"{pre_run_prob:.1f}%")
@@ -103,37 +105,44 @@ if not df.empty:
 
     # --- B. 趨勢圖表 ---
     st.write("---")
-    plot_data = pd.DataFrame({
+    plot_df = pd.DataFrame({
         "階段": ["前一周(T-1)", "公告周(T)", "後一周(T+1)", "後一個月"],
         "平均報酬 %": [
             df['pre_week'].mean(), 
-            df['announce_week'].mean(), 
-            df['after_week_1'].mean(), 
+            df['announce_week'].mean(),
+            df['after_week_1'].mean(),
             df['after_month'].mean()
         ]
     })
-    fig = px.bar(plot_data, x="階段", y="平均報酬 %", color="平均報酬 %", 
+    fig = px.bar(plot_df, x="階段", y="平均報酬 %", color="平均報酬 %", 
                  color_continuous_scale="RdYlGn", text_auto=".2f")
     st.plotly_chart(fig, use_container_width=True)
 
     # --- C. 符合條件的公司清單 ---
-    st.subheader(f"🏆 {target_year} 年符合門檻的『初號機』個股清單")
+    st.subheader(f"🏆 {target_year} 年符合門檻個股清單")
     
     display_df = df.rename(columns={
-        "stock_id": "代號", "stock_name": "名稱", "report_month": "爆發月份",
-        "growth_val": f"{study_metric}%", "pre_week": "前一周(預跑)%",
-        "announce_week": "公告周%", "after_week_1": "後一周%", 
-        "after_month": "後一個月%", "remark": "營收備註"
+        "stock_id": "代號", "stock_name": "名稱", "report_month": "月份",
+        "growth_val": f"{study_metric}%", "pre_week": "T-1周(預跑)%",
+        "announce_week": "T周(公告)%", "after_week_1": "T+1周%", 
+        "after_month": "一個月後%", "remark": "營收備註"
     })
-    
-    # 加入色塊標示漲跌
-    st.dataframe(
-        display_df.style.background_gradient(subset=["前一周(預跑)%", "公告周%", "後一個月%"], cmap="RdYlGn"),
-        use_container_width=True, height=600
-    )
+
+    try:
+        st.dataframe(
+            display_df.style.background_gradient(subset=["T-1周(預跑)%", "T周(公告)%", "一個月後%"], cmap="RdYlGn"),
+            use_container_width=True, 
+            height=600,
+            column_config={
+                "營收備註": st.column_config.TextColumn("營收備註", width="large"),
+                "代號": st.column_config.TextColumn("代號", width="small")
+            }
+        )
+    except Exception:
+        st.dataframe(display_df, use_container_width=True, height=600)
 
 else:
-    st.info("💡 目前設定下沒有符合『初號機』條件的公司，請嘗試調低門檻。")
+    st.info("💡 找不到符合的公司，請嘗試降低門檻或更換關鍵字。")
 
 st.markdown("---")
-st.caption("Developed by StockRevenueLab | 讓數據揭露主力的足跡")
+st.caption("Developed by StockRevenueLab | 數據週期：2019-2025")
