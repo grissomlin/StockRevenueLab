@@ -20,16 +20,14 @@ def get_engine():
         st.error("❌ 資料庫連線失敗")
         st.stop()
 
-# ========== 3. 數據抓取引擎 (12個月精確版) ==========
+# ========== 3. 數據抓取引擎 (精確 12 個月對齊) ==========
 @st.cache_data(ttl=3600)
 def fetch_prob_data(year, metric_col, low, high):
     engine = get_engine()
     minguo_year = int(year) - 1911
     prev_minguo_year = minguo_year - 1
     
-    # 核心邏輯：抓取影響該年度股價的 12 份黃金報表
-    # 起點：前年底 12 月 (於當年 1/10 公布)
-    # 終點：當年 11 月 (於當年 12/10 公布)
+    # 核心邏輯：對齊該年度能看到的 12 份月營收報表 (前年12月 ~ 當年11月)
     query = f"""
     WITH hit_table AS (
         SELECT stock_id, COUNT(*) as hits 
@@ -47,7 +45,7 @@ def fetch_prob_data(year, metric_col, low, high):
         FROM stock_annual_k WHERE year = '{year}'
     )
     SELECT h.hits as "爆發次數", COUNT(*) as "股票檔數",
-           ROUND(AVG(p.ret)::numeric, 1) as "平均漲幅%",
+           ROUND(AVG(p.ret)::numeric, 1) as "平均年度漲幅%", -- 👈 這裡已更新名稱
            ROUND((COUNT(*) FILTER (WHERE p.ret > 20) * 100.0 / COUNT(*))::numeric, 1) as "勝率(>20%)",
            ROUND((COUNT(*) FILTER (WHERE p.ret > 100) * 100.0 / COUNT(*))::numeric, 1) as "翻倍率(>100%)"
     FROM hit_table h JOIN perf_table p ON h.stock_id = p.stock_id
@@ -57,40 +55,39 @@ def fetch_prob_data(year, metric_col, low, high):
         return pd.read_sql_query(text(query), conn)
 
 # ========== 4. UI 介面設計 ==========
-st.title("🎲 營收爆發與股價期望值")
-st.markdown("##### 研究「營收連續達標」與「股價翻倍機率」的因果關係")
+st.title("🎲 營收爆發與年度報酬機率")
+st.markdown("""
+透過 12 份影響年度股價的報表（**前年底 12 月 ~ 當年 11 月**），
+我們統計當營收爆發次數增加時，該股票在該年度 **年 K 線** 的表現期望值。
+""")
 
 with st.sidebar:
     st.header("🔬 設定研究參數")
-    target_year = st.selectbox("研究年度", [str(y) for y in range(2025, 2019, -1)], index=1)
+    target_year = st.sidebar.selectbox("研究年度", [str(y) for y in range(2025, 2019, -1)], index=1)
     study_metric = st.selectbox("研究指標", ["yoy_pct", "mom_pct"], index=0, help="yoy為年增率，mom為月增率")
-    # 設定爆發區間
     growth_range = st.select_slider(
-        "設定營收年增率 (YoY) 爆發區間", 
+        "設定爆發區間 (%)", 
         options=[-50, 0, 20, 50, 100, 500, 1000], 
         value=(100, 1000)
     )
 
-# 執行分析
 df_prob = fetch_prob_data(target_year, study_metric, growth_range[0], growth_range[1])
 
 if not df_prob.empty:
     # A. 顯示統計總表
-    st.subheader(f"📊 {target_year} 年：營收達標次數統計 (全市場樣本)")
+    st.subheader(f"📊 {target_year} 年：營收達標次數 vs 期望報酬對照表")
     st.table(df_prob)
     
     # B. 點名功能：找出是哪些股票
     st.write("---")
     st.subheader("🔍 區間名單點名")
     
-    # 取得當前表格中的爆發次數列表
     hit_options = df_prob["爆發次數"].tolist()
-    selected_hits = st.selectbox("請選擇『爆發次數』來查看具體股票名單：", hit_options)
+    selected_hits = st.selectbox("選擇『爆發次數』查看具體名單：", hit_options)
     
     minguo_year = int(target_year) - 1911
     prev_minguo_year = minguo_year - 1
     
-    # 查詢名單的 SQL (同樣採用 12 個月邏輯)
     list_query = f"""
     WITH hit_table AS (
         SELECT stock_id, COUNT(*) as hits 
@@ -117,7 +114,7 @@ if not df_prob.empty:
     
     with get_engine().connect() as conn:
         detail_df = pd.read_sql_query(text(list_query), conn)
-        st.write(f"🏆 在 {target_year} 年『營收爆發 {selected_hits} 次』的名單如下：")
+        st.write(f"🏆 {target_year} 年『營收達標 {selected_hits} 次』的股票清單：")
         st.dataframe(detail_df, use_container_width=True)
 
     # C. 勝率視覺化
@@ -127,7 +124,7 @@ if not df_prob.empty:
     st.bar_chart(chart_data)
 
 else:
-    st.info(f"💡 在 {target_year} 年及設定的區間下，沒有符合條件的股票樣本。")
+    st.info(f"💡 在 {target_year} 年及設定區間下，沒有符合條件的樣本。")
 
 st.markdown("---")
-st.caption("Developed by StockRevenueLab | 讓數據說真話")
+st.caption("Developed by StockRevenueLab | 數據週期：2019-2025")
