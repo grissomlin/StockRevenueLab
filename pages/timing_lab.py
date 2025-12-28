@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from sqlalchemy import create_engine, text
 import urllib.parse
 import plotly.express as px
+import plotly.graph_objects as go
 
 # ========== 1. 頁面配置 ==========
 st.set_page_config(page_title="公告行為研究室 | StockRevenueLab", layout="wide")
@@ -18,10 +20,47 @@ def get_engine():
         connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
         return create_engine(connection_string)
     except Exception:
-        st.error("❌ 連線失敗")
+        st.error("❌ 資料庫連線失敗")
         st.stop()
 
-# ========== 3. 核心標題 ==========
+# ========== 3. 繪圖輔助函數 (關鍵：計算分佈並標註) ==========
+def create_enhanced_hist(df, col_name, title, color):
+    if df[col_name].dropna().empty:
+        return go.Figure()
+    
+    # 1. 計算分佈數據
+    counts, bins = np.histogram(df[col_name].dropna(), bins=20)
+    bin_centers = 0.5 * (bins[:-1] + bins[1:])
+    total = len(df)
+    percentages = (counts / total) * 100
+    
+    # 2. 建立標籤文字 (例如: 15檔\n12.5%)
+    texts = [f"{int(c)}檔<br>{p:.1f}%" if c > 0 else "" for c, p in zip(counts, percentages)]
+    
+    # 3. 使用 go.Bar 繪圖以獲得最大控制權
+    fig = go.Figure(data=[
+        go.Bar(
+            x=bin_centers,
+            y=counts,
+            text=texts,
+            textposition='outside',
+            marker_color=color,
+            hovertemplate="區間: %{x:.2f}%<br>家數: %{y}檔<br>比例: %{text}<extra></extra>"
+        )
+    ])
+    
+    fig.add_vline(x=0, line_dash="dash", line_color="black")
+    fig.update_layout(
+        title=title,
+        xaxis_title="漲跌幅 %",
+        yaxis_title="家數",
+        margin=dict(t=50, b=20, l=10, r=10),
+        height=350,
+        showlegend=False
+    )
+    return fig
+
+# ========== 4. 核心標題 ==========
 st.title("🕵️ 營收公告行為研究室 2.0")
 
 # --- 側邊欄控制 ---
@@ -32,12 +71,11 @@ with st.sidebar:
     threshold = st.slider(f"設定 {study_metric} 爆發門檻 %", 30, 300, 100)
     search_remark = st.text_input("🔍 備註關鍵字 (如: 訂單, 日本, 交屋)", "")
 
-# --- 核心 SQL：確保四階段數據都在 ---
+# --- 核心 SQL ---
 @st.cache_data(ttl=3600)
 def fetch_timing_data(year, metric_col, limit, keyword):
     engine = get_engine()
     minguo_year = int(year) - 1911
-    
     query = f"""
     WITH raw_events AS (
         SELECT stock_id, stock_name, report_month, {metric_col}, remark,
@@ -84,7 +122,7 @@ def fetch_timing_data(year, metric_col, limit, keyword):
 df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
 
 if not df.empty:
-    # --- A. 置頂統計看板 ---
+    # --- A. 統計看板 ---
     total_n = len(df)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("樣本總數", f"{total_n}")
@@ -94,48 +132,40 @@ if not df.empty:
 
     st.write("---")
     
-    # --- B. 個股清單 (完整顯示四個價格報酬) ---
-    st.subheader(f"🏆 {target_year} 年初號機清單 (四階段報酬率對照)")
-    
+    # --- B. 初號機個股清單 ---
+    st.subheader(f"🏆 {target_year} 年 初號機清單 (四階段對照)")
     display_df = df.rename(columns={
         "stock_id": "代號", "stock_name": "名稱", "report_month": "月份",
         "growth_val": f"{study_metric}%", 
-        "pre_week": "T-1周(預跑)%",
-        "announce_week": "T周(公告)%", 
-        "after_week_1": "T+1周(後續)%", 
-        "after_month": "一個月後(波段)%", 
-        "remark": "備註"
+        "pre_week": "T-1周(預跑)%", "announce_week": "T周(公告)%", 
+        "after_week_1": "T+1周(後續)%", "after_month": "一個月後%", "remark": "備註"
     })
 
     st.dataframe(
-        display_df.style.background_gradient(subset=["T-1周(預跑)%", "T周(公告)%", "T+1周(後續)%", "一個月後(波段)%"], cmap="RdYlGn"),
-        use_container_width=True, height=500,
+        display_df.style.background_gradient(subset=["T-1周(預跑)%", "T周(公告)%", "T+1周(後續)%", "一個月後%"], cmap="RdYlGn"),
+        use_container_width=True, height=450,
         column_config={
             f"{study_metric}%": st.column_config.NumberColumn(format="%.2f"),
-            "T-1周(預跑)%": st.column_config.NumberColumn(format="%.2f"),
-            "T周(公告)%": st.column_config.NumberColumn(format="%.2f"),
-            "T+1周(後續)%": st.column_config.NumberColumn(format="%.2f"),
-            "一個月後(波段)%": st.column_config.NumberColumn(format="%.2f"),
             "備註": st.column_config.TextColumn(width="large")
         }
     )
 
     st.write("---")
 
-    # --- C. 四個分布圖 (並排對照) ---
-    st.subheader("📊 階段報酬率分佈對照")
+    # --- C. 四張分布圖 (底部並排，顯示家數與比例) ---
+    st.subheader("📊 階段報酬率分佈對照 (含家數與比例標記)")
     
-    col_a, col_b = st.columns(2)
-    col_c, col_d = st.columns(2)
+    row1_col1, row1_col2 = st.columns(2)
+    row2_col1, row2_col2 = st.columns(2)
 
-    with col_a:
-        st.plotly_chart(px.histogram(df, x="pre_week", title="❶ T-1 周 (預跑)", nbins=30, color_discrete_sequence=['#ff4b4b']).add_vline(x=0, line_dash="dash"), use_container_width=True)
-    with col_b:
-        st.plotly_chart(px.histogram(df, x="announce_week", title="❷ T 周 (公告)", nbins=30, color_discrete_sequence=['#ffaa00']).add_vline(x=0, line_dash="dash"), use_container_width=True)
-    with col_c:
-        st.plotly_chart(px.histogram(df, x="after_week_1", title="❸ T+1 周 (後續)", nbins=30, color_discrete_sequence=['#32cd32']).add_vline(x=0, line_dash="dash"), use_container_width=True)
-    with col_d:
-        st.plotly_chart(px.histogram(df, x="after_month", title="❹ 公告後一個月", nbins=30, color_discrete_sequence=['#1e90ff']).add_vline(x=0, line_dash="dash"), use_container_width=True)
+    with row1_col1:
+        st.plotly_chart(create_enhanced_hist(df, "pre_week", "❶ T-1 周 (公告前夕)", "#ff4b4b"), use_container_width=True)
+    with row1_col2:
+        st.plotly_chart(create_enhanced_hist(df, "announce_week", "❷ T 周 (公告當周)", "#ffaa00"), use_container_width=True)
+    with row2_col1:
+        st.plotly_chart(create_enhanced_hist(df, "after_week_1", "❸ T+1 周 (公告後一周)", "#32cd32"), use_container_width=True)
+    with row2_col2:
+        st.plotly_chart(create_enhanced_hist(df, "after_month", "❹ 公告後一個月", "#1e90ff"), use_container_width=True)
 
 else:
-    st.info("💡 找不到符合的公司。")
+    st.info("💡 找不到符合條件的公司。")
