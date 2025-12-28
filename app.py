@@ -55,7 +55,6 @@ def get_engine():
 def fetch_main_data(year, calc_method):
     engine = get_engine()
     
-    # 切換中位數或平均值
     if calc_method == "中位數 (推薦)":
         agg_func = "percentile_cont(0.5) WITHIN GROUP (ORDER BY m.yoy_pct)"
     else:
@@ -101,7 +100,7 @@ def fetch_main_data(year, calc_method):
 # ========== 4. UI 介面設計 ==========
 st.sidebar.header("🔬 研究條件篩選")
 target_year = st.sidebar.selectbox("分析年度", ["2024", "2025"], index=0)
-calc_method = st.sidebar.radio("統計指標", ["中位數 (推薦)", "平均值"], help="中位數能過濾極端數字，反映群體真相。")
+calc_method = st.sidebar.radio("統計指標", ["中位數 (推薦)", "平均值"])
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"數據對應月份：{int(target_year)-1912}_12 至 {int(target_year)-1911}_11")
@@ -124,9 +123,68 @@ if not df.empty:
     
     pivot_df = df.pivot(index='return_bin', columns='report_month', values='val')
     
+    # 修正語法錯誤：確保引號閉合且參數正確
     fig = px.imshow(
         pivot_df,
-        labels=dict(x="報表月份", y="年度漲幅區間", color="營收年增率 %"),
+        labels=dict(x="報表月份", y="年度漲幅區間", color="YoY %"),
         x=pivot_df.columns,
         y=pivot_df.index,
-        color_continuous_scale="RdYlGn_
+        color_continuous_scale="RdYlGn",
+        aspect="auto",
+        text_auto=".1f"
+    )
+    fig.update_layout(xaxis_nticks=12)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ========== 6. 區間領頭羊 ==========
+    st.write("---")
+    st.subheader("🔍 點名時間：看看這些區間的「業績領頭羊」是誰？")
+    
+    selected_bin = st.selectbox("選擇一個漲幅區間查看前 10 名營收王：", pivot_df.index[::-1])
+    
+    minguo_year = int(target_year) - 1911
+    prev_minguo_year = minguo_year - 1
+    
+    detail_query = f"""
+    WITH target_stocks AS (
+        SELECT symbol FROM stock_annual_k 
+        WHERE year = '{target_year}' 
+        AND (
+            CASE 
+                WHEN (year_close - year_open) / year_open < 0 THEN '00. 下跌'
+                WHEN (year_close - year_open) / year_open >= 10 THEN '11. 1000%+'
+                ELSE LPAD(FLOOR((year_close - year_open) / year_open)::text, 2, '0') || '. ' || 
+                     (FLOOR((year_close - year_open) / year_open)*100)::text || '-' || 
+                     ((FLOOR((year_close - year_open) / year_open)+1)*100)::text || '%'
+            END
+        ) = '{selected_bin}'
+    )
+    SELECT 
+        m.stock_id as "公司代號",
+        m.stock_name as "公司名稱",
+        ROUND(AVG(m.yoy_pct)::numeric, 2) as "平均營收年增率 %"
+    FROM monthly_revenue m
+    JOIN target_stocks t ON m.stock_id = SPLIT_PART(t.symbol, '.', 1)
+    WHERE m.report_month = '{prev_minguo_year}_12' 
+       OR (m.report_month LIKE '{minguo_year}_%' AND m.report_month <= '{minguo_year}_11')
+    GROUP BY m.stock_id, m.stock_name
+    ORDER BY "平均營收年增率 %" DESC
+    LIMIT 10;
+    """
+    
+    with get_engine().connect() as conn:
+        top_df = pd.read_sql_query(text(detail_query), conn)
+    
+    if not top_df.empty:
+        st.table(top_df)
+    else:
+        st.info("該區間暫無對應數據。")
+
+    with st.expander("👉 查看原始數據矩陣"):
+        st.dataframe(pivot_df.style.format("{:.1f}%"), use_container_width=True)
+
+else:
+    st.warning("⚠️ 資料庫中尚未發現對應年度的分析資料。")
+
+st.markdown("---")
+st.caption("Developed by StockRevenueLab | 讓數據說真話")
