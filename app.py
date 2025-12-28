@@ -6,9 +6,7 @@ import plotly.express as px
 
 # ========== 1. 頁面配置 ==========
 st.set_page_config(page_title="StockRevenueLab | 趨勢觀測站", page_icon="🧪", layout="wide")
-
 st.sidebar.success("💡 想要看『勝率與機率分析』？請點選左側選單的 probability 頁面！")
-
 st.title("🧪 StockRevenueLab: 全時段飆股基因對帳單")
 
 # ========== 2. 安全資料庫連線 ==========
@@ -25,13 +23,11 @@ def get_engine():
         st.error("❌ 資料庫連線失敗")
         st.stop()
 
-# ========== 3. 數據抓取引擎 (支援動態年份) ==========
+# ========== 3. 數據抓取引擎 ==========
 @st.cache_data(ttl=3600)
 def fetch_main_data(year, calc_method):
     engine = get_engine()
     agg_func = "percentile_cont(0.5) WITHIN GROUP (ORDER BY m.yoy_pct)" if calc_method == "中位數 (推薦)" else "AVG(m.yoy_pct)"
-    
-    # 自動計算民國年
     minguo_year = int(year) - 1911
     prev_minguo_year = minguo_year - 1
     
@@ -61,9 +57,8 @@ def fetch_main_data(year, calc_method):
     with engine.connect() as conn:
         return pd.read_sql_query(text(query), conn)
 
-# ========== 4. 介面篩選 (解鎖 2020-2025) ==========
+# ========== 4. UI 介面 ==========
 st.sidebar.header("🔬 研究條件篩選")
-# 這裡直接把範圍拉大
 target_year = st.sidebar.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)])
 calc_method = st.sidebar.radio("熱力圖指標", ["中位數 (推薦)", "平均值"])
 
@@ -74,5 +69,39 @@ if not df.empty:
     pivot_df = df.pivot(index='return_bin', columns='report_month', values='val')
     fig = px.imshow(pivot_df, color_continuous_scale="RdYlGn", aspect="auto", text_auto=".1f")
     st.plotly_chart(fig, use_container_width=True)
+
+    # 區間領頭羊功能
+    st.write("---")
+    st.subheader(f"🔍 {target_year} 區間業績點名")
+    selected_bin = st.selectbox("選擇漲幅區間：", pivot_df.index[::-1])
+    
+    minguo_year = int(target_year) - 1911
+    prev_minguo_year = minguo_year - 1
+    
+    detail_query = f"""
+    WITH target_stocks AS (
+        SELECT symbol FROM stock_annual_k 
+        WHERE year = '{target_year}' 
+        AND (CASE 
+                WHEN (year_close - year_open) / year_open < 0 THEN '00. 下跌'
+                WHEN (year_close - year_open) / year_open >= 10 THEN '11. 1000%+'
+                ELSE LPAD(FLOOR((year_close - year_open) / year_open)::text, 2, '0') || '. ' || 
+                     (FLOOR((year_close - year_open) / year_open)*100)::text || '-' || 
+                     ((FLOOR((year_close - year_open) / year_open)+1)*100)::text || '%'
+            END) = '{selected_bin}'
+    )
+    SELECT m.stock_id as "代號", m.stock_name as "名稱",
+        ROUND(AVG(m.yoy_pct)::numeric, 2) as "平均年增率 %",
+        ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY m.yoy_pct)::numeric, 2) as "中位數年增率 %"
+    FROM monthly_revenue m
+    JOIN target_stocks t ON m.stock_id = SPLIT_PART(t.symbol, '.', 1)
+    WHERE m.report_month = '{prev_minguo_year}_12' 
+       OR (m.report_month LIKE '{minguo_year}_%' AND (LENGTH(report_month) = {len(str(minguo_year))}+3))
+    GROUP BY m.stock_id, m.stock_name
+    ORDER BY "平均年增率 %" DESC LIMIT 10;
+    """
+    with get_engine().connect() as conn:
+        st.table(pd.read_sql_query(text(detail_query), conn))
+
 else:
-    st.warning(f"⚠️ 資料庫中尚無 {target_year} 年的完整比對資料，請檢查數據匯入狀況。")
+    st.warning(f"⚠️ 查無 {target_year} 年數據。")
