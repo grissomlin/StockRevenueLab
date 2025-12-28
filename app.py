@@ -6,7 +6,7 @@ import plotly.express as px
 
 # ========== 1. 頁面配置 ==========
 st.set_page_config(
-    page_title="StockRevenueLab | 飆股基因對帳單",
+    page_title="StockRevenueLab | 趨勢觀測站",
     page_icon="🧪",
     layout="wide"
 )
@@ -18,6 +18,9 @@ st.markdown("""
     .stMetric { border-left: 5px solid #ff4b4b; background-color: white; padding: 10px; }
     </style>
     """, unsafe_allow_html=True)
+
+# 導引提示
+st.sidebar.success("💡 想要看『勝率與機率分析』？請點選左側選單的 probability 頁面！")
 
 st.title("🧪 StockRevenueLab: 2024 飆股基因對帳單")
 
@@ -42,7 +45,7 @@ def get_engine():
         connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
         return create_engine(connection_string)
     except Exception as e:
-        st.error("❌ 資料庫連線失敗，請檢查 Secrets 設定。")
+        st.error("❌ 資料庫連線失敗，請檢查 Streamlit Secrets 設定。")
         st.stop()
 
 # ========== 3. 數據抓取引擎 ==========
@@ -128,57 +131,11 @@ if not df.empty:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # ========== 6. 區間領頭羊 (同時顯示平均與中位數) ==========
+    # ========== 6. 區間領頭羊 ==========
     st.write("---")
     st.subheader("🔍 區間業績點名：誰是該區間的成長王？")
     
     selected_bin = st.selectbox("選擇漲幅區間查看清單：", pivot_df.index[::-1])
     
     minguo_year = int(target_year) - 1911
-    prev_minguo_year = minguo_year - 1
-    
-    detail_query = f"""
-    WITH target_stocks AS (
-        SELECT symbol FROM stock_annual_k 
-        WHERE year = '{target_year}' 
-        AND (
-            CASE 
-                WHEN (year_close - year_open) / year_open < 0 THEN '00. 下跌'
-                WHEN (year_close - year_open) / year_open >= 10 THEN '11. 1000%+'
-                ELSE LPAD(FLOOR((year_close - year_open) / year_open)::text, 2, '0') || '. ' || 
-                     (FLOOR((year_close - year_open) / year_open)*100)::text || '-' || 
-                     ((FLOOR((year_close - year_open) / year_open)+1)*100)::text || '%'
-            END
-        ) = '{selected_bin}'
-    )
-    SELECT 
-        m.stock_id as "代號",
-        m.stock_name as "名稱",
-        ROUND(AVG(m.yoy_pct)::numeric, 2) as "平均年增率 %",
-        ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY m.yoy_pct)::numeric, 2) as "中位數年增率 %"
-    FROM monthly_revenue m
-    JOIN target_stocks t ON m.stock_id = SPLIT_PART(t.symbol, '.', 1)
-    WHERE m.report_month = '{prev_minguo_year}_12' 
-       OR (m.report_month LIKE '{minguo_year}_%' AND m.report_month <= '{minguo_year}_11')
-    GROUP BY m.stock_id, m.stock_name
-    ORDER BY "平均年增率 %" DESC
-    LIMIT 10;
-    """
-    
-    with get_engine().connect() as conn:
-        top_df = pd.read_sql_query(text(detail_query), conn)
-    
-    if not top_df.empty:
-        st.write(f"🏆 **{selected_bin}** 區間中，營收表現最亮眼的 10 檔公司：")
-        st.table(top_df)
-    else:
-        st.info("該區間暫無數據。")
-
-    with st.expander("👉 查看原始數據矩陣"):
-        st.dataframe(pivot_df.style.format("{:.1f}%"), use_container_width=True)
-
-else:
-    st.warning("⚠️ 數據加載中或資料庫內無資料。")
-
-st.markdown("---")
-st.caption("Developed by StockRevenueLab | 讓數據說真話")
+    prev_
