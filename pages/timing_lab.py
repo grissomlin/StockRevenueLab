@@ -5,7 +5,7 @@ import urllib.parse
 import plotly.express as px
 
 # ========== 1. 頁面配置 ==========
-st.set_page_config(page_title="公告行為研究室 | StockRevenueLab", layout="wide")
+st.set_page_config(page_title="公告行為研究室 2.0 | StockRevenueLab", layout="wide")
 
 # ========== 2. 安全資料庫連線 ==========
 @st.cache_resource
@@ -24,20 +24,25 @@ def get_engine():
 # ========== 3. 核心標題 ==========
 st.title("🕵️ 營收公告行為研究室 2.0")
 
+with st.expander("📝 研究邏輯（漲跌比例說明）"):
+    st.markdown("""
+    * **漲跌比例**：計算在所有符合條件的樣本中，前一周股價呈現正報酬的家數佔比。
+    * **極端預跑 (>10%)**：這代表主力不只是「先行」，而是「瘋狂掃貨」，這類股票公告後的利多出盡風險通常最高。
+    """)
+
 # --- 側邊欄控制 ---
 with st.sidebar:
     st.header("🔬 策略參數")
     target_year = st.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)], index=1)
     study_metric = st.radio("成長指標", ["yoy_pct", "mom_pct"])
     threshold = st.slider(f"設定 {study_metric} 爆發門檻 %", 30, 300, 100)
-    search_remark = st.text_input("🔍 關鍵字搜尋 (如: 訂單, 日本, 認列, 工案)", "")
+    search_remark = st.text_input("🔍 備註關鍵字 (如: 交屋, 訂單)", "")
 
-# --- 核心 SQL：確保數值被 ROUND ---
+# --- 核心 SQL ---
 @st.cache_data(ttl=3600)
 def fetch_timing_data(year, metric_col, limit, keyword):
     engine = get_engine()
     minguo_year = int(year) - 1911
-    
     query = f"""
     WITH raw_events AS (
         SELECT stock_id, stock_name, report_month, {metric_col}, remark,
@@ -66,11 +71,10 @@ def fetch_timing_data(year, metric_col, limit, keyword):
     final_detail AS (
         SELECT 
             e.stock_id, e.stock_name, e.report_month, 
-            ROUND(e.{metric_col}::numeric, 2) as growth_val, 
+            ROUND(e.{metric_col}::numeric, 1) as growth_val, 
             e.remark,
             ROUND(AVG(CASE WHEN c.date >= e.base_date - interval '9 days' AND c.date <= e.base_date - interval '3 days' THEN c.weekly_ret END)::numeric, 2) as pre_week,
             ROUND(AVG(CASE WHEN c.date > e.base_date - interval '3 days' AND c.date <= e.base_date + interval '4 days' THEN c.weekly_ret END)::numeric, 2) as announce_week,
-            ROUND(AVG(CASE WHEN c.date > e.base_date + interval '4 days' AND c.date <= e.base_date + interval '11 days' THEN c.weekly_ret END)::numeric, 2) as after_week_1,
             ROUND(AVG(CASE WHEN c.date > e.base_date + interval '11 days' AND c.date <= e.base_date + interval '30 days' THEN c.weekly_ret END)::numeric, 2) as after_month
         FROM spark_events e
         JOIN weekly_calc c ON e.stock_id = SPLIT_PART(c.symbol, '.', 1)
@@ -84,41 +88,43 @@ def fetch_timing_data(year, metric_col, limit, keyword):
 df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
 
 if not df.empty:
-    # --- 統計看板 ---
+    # --- A. 深度統計看板 ---
+    total_n = len(df)
+    up_count = (df['pre_week'] > 0).sum()
+    super_up = (df['pre_week'] >= 10).sum()
+    down_count = (df['pre_week'] < 0).sum()
+    super_down = (df['pre_week'] <= -10).sum()
+
+    st.subheader(f"📊 {target_year} 年 T-1周 (公告前夕) 漲跌分佈統計")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("樣本數", f"{len(df)}")
-    c2.metric("T-1平均", f"{df['pre_week'].mean():.2f}%")
-    c3.metric("預跑機率", f"{(df['pre_week'] > 2).sum() / len(df) * 100:.1f}%")
-    c4.metric("利多出盡", f"{(df['after_month'] < df['pre_week']).sum() / len(df) * 100:.1f}%")
+    c1.metric("樣本總數", f"{total_n} 檔")
+    c2.metric("漲跌家數比", f"{up_count} 漲 / {down_count} 跌", f"{up_count/total_n*100:.1f}% 勝率")
+    c3.metric("強勢預跑 (>10%)", f"{super_up} 檔", f"{super_up/total_n*100:.1f}% 比例")
+    c4.metric("利多出盡比例", f"{(df['after_month'] < df['pre_week']).sum()} 檔", f"{(df['after_month'] < df['pre_week']).sum()/total_n*100:.1f}%")
 
+    # --- B. 分佈直方圖 ---
     st.write("---")
-    
-    # --- 趨勢圖表 ---
-    plot_df = pd.DataFrame({
-        "階段": ["前一周(T-1)", "公告周(T)", "後一周(T+1)", "一個月後"],
-        "平均報酬 %": [df['pre_week'].mean(), df['announce_week'].mean(), df['after_week_1'].mean(), df['after_month'].mean()]
-    })
-    fig = px.bar(plot_df, x="階段", y="平均報酬 %", color="平均報酬 %", color_continuous_scale="RdYlGn", text_auto=".2f")
-    st.plotly_chart(fig, use_container_width=True)
+    fig_hist = px.histogram(df, x="pre_week", nbins=50, 
+                            title="公告前一周 (T-1) 漲跌幅分佈圖",
+                            labels={'pre_week': '漲跌幅 %'},
+                            color_discrete_sequence=['#ff4b4b'])
+    fig_hist.add_vline(x=0, line_dash="dash", line_color="black")
+    st.plotly_chart(fig_hist, use_container_width=True)
 
-    # --- 個股清單：這裡強制設定格式 ---
-    st.subheader("🏆 符合門檻個股清單")
+    # --- C. 個股清單 ---
+    st.subheader("🏆 初號機個股清單與明細")
     display_df = df.rename(columns={
         "stock_id": "代號", "stock_name": "名稱", "report_month": "月份",
         "growth_val": f"{study_metric}%", "pre_week": "T-1周%",
-        "announce_week": "T周%", "after_week_1": "T+1周%", "after_month": "一個月後%", "remark": "備註"
+        "announce_week": "T周%", "after_month": "一個月後%", "remark": "備註"
     })
 
-    # 🌟 重點：加上 st.column_config 並設定 format="%.2f"
     st.dataframe(
         display_df.style.background_gradient(subset=["T-1周%", "T周%", "一個月後%"], cmap="RdYlGn"),
-        use_container_width=True, height=600,
+        use_container_width=True, height=500,
         column_config={
             f"{study_metric}%": st.column_config.NumberColumn(format="%.2f"),
             "T-1周%": st.column_config.NumberColumn(format="%.2f"),
-            "T周%": st.column_config.NumberColumn(format="%.2f"),
-            "T+1周%": st.column_config.NumberColumn(format="%.2f"),
-            "一個月後%": st.column_config.NumberColumn(format="%.2f"),
             "備註": st.column_config.TextColumn(width="large")
         }
     )
