@@ -27,21 +27,18 @@ def get_engine():
         connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
         return create_engine(connection_string)
     except Exception:
-        st.error("❌ 資料庫連線失敗")
+        st.error("❌ 資料庫連線失敗，請檢查 Secrets 設定")
         st.stop()
 
-# ========== 3. 數據濃縮函數 (解決網址過長問題) ==========
+# ========== 3. 數據處理函數 ==========
 def get_ai_summary_dist(df, col_name):
-    """將分佈高度濃縮為 5 個核心區間以節省網址字數"""
+    """將分佈高度濃縮為核心區間，提供給 AI 參考"""
     data = df[col_name].dropna()
     if data.empty: return "無數據"
-    
     total = len(data)
-    # 定義固定的核心區間
     bins = [-float('inf'), -5, -1, 1, 5, float('inf')]
-    labels = ["大跌(<-5%)", "小跌(-5%~-1%)", "持平(-1%~1%)", "小漲(1%~5%)", "大漲(>5%)"]
+    labels = ["大跌(<-5%)", "小跌", "持平", "小漲", "大漲(>5%)"]
     counts, _ = np.histogram(data, bins=bins)
-    
     summary = []
     for label, count in zip(labels, counts):
         if count > 0:
@@ -49,11 +46,11 @@ def get_ai_summary_dist(df, col_name):
     return " / ".join(summary)
 
 def create_big_hist(df, col_name, title, color, desc):
+    """繪製大型分佈圖"""
     data = df[col_name].dropna()
     if data.empty: return
     counts, bins = np.histogram(data, bins=25)
     bin_centers = 0.5 * (bins[:-1] + bins[1:])
-    total = len(data)
     texts = [f"<b>{int(c)}檔</b>" for c in counts]
     fig = go.Figure(data=[go.Bar(x=bin_centers, y=counts, text=texts, textposition='outside', marker_color=color)])
     fig.add_vline(x=0, line_dash="dash", line_color="black", line_width=2)
@@ -62,7 +59,7 @@ def create_big_hist(df, col_name, title, color, desc):
     st.info(f"💡 **科學解讀：** {desc}")
     st.markdown("---")
 
-# ========== 4. 核心 SQL ==========
+# ========== 4. 核心數據讀取 (SQL) ==========
 @st.cache_data(ttl=3600)
 def fetch_timing_data(year, metric_col, limit, keyword):
     engine = get_engine()
@@ -109,13 +106,15 @@ def fetch_timing_data(year, metric_col, limit, keyword):
     with engine.connect() as conn:
         return pd.read_sql_query(text(query), conn)
 
-# 獲取參數
+# ========== 5. 使用介面區 ==========
 with st.sidebar:
     st.header("🔬 策略參數設定")
     target_year = st.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)], index=1)
     study_metric = st.radio("成長指標", ["yoy_pct", "mom_pct"])
     threshold = st.slider(f"設定 {study_metric} 爆發門檻 %", 30, 300, 100)
     search_remark = st.text_input("🔍 關鍵字搜尋", "")
+
+st.title(f"🕵️ {target_year} 年 公告行為研究室")
 
 df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
 
@@ -130,27 +129,24 @@ if not df.empty:
     c3.metric("T-1周平均", f"{w_avg}%")
     c4.metric("T周平均", f"{a_avg}%")
     c5.metric("T+1月平均", f"{f_avg}%")
-
     st.write("---")
     
     # B. 原始明細
-    st.subheader(f"🏆 {target_year} 年 原始數據明細")
+    st.subheader("🏆 原始數據明細")
     df['連結'] = df['stock_id'].apply(lambda x: f"https://www.wantgoo.com/stock/{x}/technical-chart")
     st.dataframe(df, use_container_width=True, height=400, column_config={"連結": st.column_config.LinkColumn("圖表", display_text="🔗")})
-
     st.write("---")
 
-    # C. 分佈圖
-    create_big_hist(df, "pre_month", "⓪ T-1 月 (大戶佈局區)", "#8a2be2", "公告前 30 天走勢。")
-    create_big_hist(df, "pre_week", "❶ T-1 周 (短線預跑區)", "#ff4b4b", "公告前一週走勢。")
-    create_big_hist(df, "announce_week", "❷ T 周 (公告當周)", "#ffaa00", "公告當週表現。")
-    create_big_hist(df, "after_month", "❹ 公告後一個月 (趨勢區)", "#1e90ff", "一個月後的波段結局。")
+    # C. 完整分佈圖
+    create_big_hist(df, "pre_month", "⓪ T-1 月 (大戶佈局區)", "#8a2be2", "公告前一個月的累積表現。")
+    create_big_hist(df, "pre_week", "❶ T-1 周 (短線預跑區)", "#ff4b4b", "公告前一周的反應。")
+    create_big_hist(df, "announce_week", "❷ T 周 (公告當周)", "#ffaa00", "公告正式釋出後的波動。")
+    create_big_hist(df, "after_month", "❹ 公告後一個月 (趨勢區)", "#1e90ff", "利多出盡還是主升段開端？")
 
-    # D. AI 指令與密碼驗證
+    # D. AI 診斷專家系統 (核心升級區)
     st.divider()
     st.subheader("🤖 AI 投資行為診斷")
     
-    # 生成濃縮的分佈文字
     dist_txt = (
         f"1.T-1月分佈: {get_ai_summary_dist(df, 'pre_month')}\n"
         f"2.T-1周分佈: {get_ai_summary_dist(df, 'pre_week')}\n"
@@ -159,50 +155,50 @@ if not df.empty:
     )
 
     prompt_text = (
-        f"請擔任專業量化分析師，分析台股 {target_year} 年營收爆發行為。樣本數 {total_n}。\n"
+        f"分析台股 {target_year} 年營收爆發行為。樣本數 {total_n}。\n"
         f"平均報酬：T-1月 {m_avg}%, T-1周 {w_avg}%, T周 {a_avg}%, T+1月 {f_avg}%\n\n"
         f"【分佈摘要數據】：\n{dist_txt}\n\n"
-        f"請解讀此年度市場資訊先行程度（大戶佈局或短線預跑），並針對當前的樣本數據給予具體的策略建議。"
+        f"請針對數據解讀大戶先行、短線熱度或利多鈍化現象，給予具體的策略建議。"
     )
 
     col_p, col_l = st.columns([2, 1])
     with col_p:
+        st.write("📋 **待分析指令**")
         st.code(prompt_text, language="text")
-        st.caption("💡 如果點擊下方按鈕失敗，請手動複製上方代碼至 AI 平台。")
 
     with col_l:
-        st.write("🚀 **外部 AI 工具**")
+        st.write("🚀 **外部與內建診斷**")
         encoded_p = urllib.parse.quote(prompt_text)
         st.link_button("🔥 開啟 ChatGPT (網址帶入)", f"https://chatgpt.com/?q={encoded_p}")
-        st.link_button("♊ 開啟 Gemini 官網", "https://gemini.google.com/app")
         
         st.write("---")
-        st.write("🤖 **內建 AI 分析 (免跳轉)**")
-        if st.button("🔒 密碼驗證：直接使用內建 Gemini 分析"):
-            st.session_state.check_pw = True
+        if st.button("🔒 密碼驗證：啟動內建 Gemini 診斷"):
+            st.session_state.run_ai = True
 
-    # 內建 AI 分析對話框與邏輯
-    if st.session_state.get("check_pw", False):
-        with st.form("pw_gemini"):
-            user_pw = st.text_input("請輸入研究員密碼：", type="password")
-            submitted = st.form_submit_button("啟動內建 Gemini 專家診斷")
-            if submitted:
+    # 內建 Gemini 邏輯 - 解決 404 問題
+    if st.session_state.get("run_ai", False):
+        with st.form("ai_form"):
+            user_pw = st.text_input("輸入研究員密碼：", type="password")
+            if st.form_submit_button("執行分析"):
                 if user_pw == st.secrets["AI_ASK_PASSWORD"]:
                     if AI_AVAILABLE:
                         try:
                             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                            model = genai.GenerativeModel('gemini-1.5-flash')
-                            with st.spinner("Gemini 正在深入閱卷分析中..."):
+                            # 自動尋找可用模型避免 404
+                            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                            target_model = next((m for m in models if "gemini-1.5-flash" in m), models[0])
+                            
+                            model = genai.GenerativeModel(target_model)
+                            with st.spinner(f"正在調用 {target_model} 進行深度診斷..."):
                                 response = model.generate_content(prompt_text)
-                                st.info("### 🤖 內建 Gemini 專家診斷報告")
+                                st.info(f"### 🤖 內建專家報告 ({target_model})")
                                 st.markdown(response.text)
-                                st.session_state.check_pw = False # 分析完關閉對話框
                         except Exception as e:
                             st.error(f"AI 調用失敗: {e}")
                     else:
-                        st.error("環境套件 google-generativeai 缺失，請檢查部署設定。")
+                        st.error("環境未安裝 google-generativeai")
                 else:
-                    st.error("密碼錯誤，請重新輸入。")
+                    st.error("密碼錯誤")
 
 else:
     st.info("💡 查無符合條件之樣本。")
