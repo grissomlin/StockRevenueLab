@@ -27,12 +27,11 @@ def get_engine():
         connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
         return create_engine(connection_string)
     except Exception:
-        st.error("❌ 資料庫連線失敗，請檢查 Secrets 設定")
+        st.error("❌ 資料庫連線失敗")
         st.stop()
 
-# ========== 3. 數據處理函數 ==========
+# ========== 3. 數據濃縮函數 ==========
 def get_ai_summary_dist(df, col_name):
-    """將分佈高度濃縮為核心區間，提供給 AI 參考"""
     data = df[col_name].dropna()
     if data.empty: return "無數據"
     total = len(data)
@@ -46,7 +45,6 @@ def get_ai_summary_dist(df, col_name):
     return " / ".join(summary)
 
 def create_big_hist(df, col_name, title, color, desc):
-    """繪製大型分佈圖"""
     data = df[col_name].dropna()
     if data.empty: return
     counts, bins = np.histogram(data, bins=25)
@@ -59,7 +57,7 @@ def create_big_hist(df, col_name, title, color, desc):
     st.info(f"💡 **科學解讀：** {desc}")
     st.markdown("---")
 
-# ========== 4. 核心數據讀取 (SQL) ==========
+# ========== 4. 核心數據讀取 (含初次爆發邏輯) ==========
 @st.cache_data(ttl=3600)
 def fetch_timing_data(year, metric_col, limit, keyword):
     engine = get_engine()
@@ -79,7 +77,7 @@ def fetch_timing_data(year, metric_col, limit, keyword):
                END::date as base_date
         FROM raw_events
         WHERE {metric_col} >= {limit} 
-          AND (prev_metric < {limit} OR prev_metric IS NULL)
+          AND (prev_metric < {limit} OR prev_metric IS NULL) -- 確保這是「初次」爆發
           AND report_month LIKE '{minguo_year}_%'
           AND (remark LIKE '%%{keyword}%%' OR stock_name LIKE '%%{keyword}%%')
     ),
@@ -138,12 +136,12 @@ if not df.empty:
     st.write("---")
 
     # C. 完整分佈圖
-    create_big_hist(df, "pre_month", "⓪ T-1 月 (大戶佈局區)", "#8a2be2", "公告前一個月的累積表現。")
+    create_big_hist(df, "pre_month", "⓪ T-1 月 (大戶佈局區)", "#8a2be2", "公告前一個月的走勢。")
     create_big_hist(df, "pre_week", "❶ T-1 周 (短線預跑區)", "#ff4b4b", "公告前一周的反應。")
     create_big_hist(df, "announce_week", "❷ T 周 (公告當周)", "#ffaa00", "公告正式釋出後的波動。")
     create_big_hist(df, "after_month", "❹ 公告後一個月 (趨勢區)", "#1e90ff", "利多出盡還是主升段開端？")
 
-    # D. AI 診斷專家系統 (核心升級區)
+    # D. AI 診斷專家系統 (加入參數詳情)
     st.divider()
     st.subheader("🤖 AI 投資行為診斷")
     
@@ -154,16 +152,27 @@ if not df.empty:
         f"4.T+1月分佈: {get_ai_summary_dist(df, 'after_month')}"
     )
 
+    # 關鍵優化：將篩選條件寫入 Prompt
+    metric_name = "年增率 (YoY)" if study_metric == "yoy_pct" else "月增率 (MoM)"
     prompt_text = (
-        f"分析台股 {target_year} 年營收爆發行為。樣本數 {total_n}。\n"
-        f"平均報酬：T-1月 {m_avg}%, T-1周 {w_avg}%, T周 {a_avg}%, T+1月 {f_avg}%\n\n"
+        f"請擔任專業量化分析師，分析台股 {target_year} 年的營收公告數據。\n"
+        f"【實驗參數設定】：\n"
+        f"- 指標：{metric_name}\n"
+        f"- 爆發門檻：設定為 {threshold}% 以上\n"
+        f"- 樣本特性：僅包含『初次爆發』之個股 (即前一月未達標，本月首度衝破 {threshold}%)\n"
+        f"- 樣本總數：{total_n} 檔\n\n"
+        f"【全階段平均報酬】：\n"
+        f"- 公告前一個月: {m_avg}% / 公告前一週: {w_avg}% / 公告當週: {a_avg}% / 公告後一個月: {f_avg}%\n\n"
         f"【分佈摘要數據】：\n{dist_txt}\n\n"
-        f"請針對數據解讀大戶先行、短線熱度或利多鈍化現象，給予具體的策略建議。"
+        f"請針對以上數據進行診斷：\n"
+        f"1. 從 T-1 月與 T-1 週的漲幅分佈來看，是否有證據顯示『主力/內部人提早知道訊息並佈局』？(若 T-1 月平均報酬顯著為正且大漲檔數比例高，則機率極大)\n"
+        f"2. 營收正式公告(T周)後，市場呈現的是『追加買盤』還是『利多出盡』？\n"
+        f"3. 針對這組數據特徵，給予投資人最具期望值的進場點建議。"
     )
 
     col_p, col_l = st.columns([2, 1])
     with col_p:
-        st.write("📋 **待分析指令**")
+        st.write("📋 **待分析指令 (含詳細實驗參數)**")
         st.code(prompt_text, language="text")
 
     with col_l:
@@ -175,7 +184,7 @@ if not df.empty:
         if st.button("🔒 密碼驗證：啟動內建 Gemini 診斷"):
             st.session_state.run_ai = True
 
-    # 內建 Gemini 邏輯 - 解決 404 問題
+    # 內建 Gemini 邏輯
     if st.session_state.get("run_ai", False):
         with st.form("ai_form"):
             user_pw = st.text_input("輸入研究員密碼：", type="password")
@@ -184,21 +193,18 @@ if not df.empty:
                     if AI_AVAILABLE:
                         try:
                             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                            # 自動尋找可用模型避免 404
                             models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                             target_model = next((m for m in models if "gemini-1.5-flash" in m), models[0])
                             
                             model = genai.GenerativeModel(target_model)
-                            with st.spinner(f"正在調用 {target_model} 進行深度診斷..."):
+                            with st.spinner(f"正在分析 {total_n} 檔數據背景..."):
                                 response = model.generate_content(prompt_text)
                                 st.info(f"### 🤖 內建專家報告 ({target_model})")
                                 st.markdown(response.text)
                         except Exception as e:
                             st.error(f"AI 調用失敗: {e}")
-                    else:
-                        st.error("環境未安裝 google-generativeai")
-                else:
-                    st.error("密碼錯誤")
+                    else: st.error("環境未安裝 google-generativeai")
+                else: st.error("密碼錯誤")
 
 else:
     st.info("💡 查無符合條件之樣本。")
