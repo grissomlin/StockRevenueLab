@@ -5,3 +5,5 @@ psycopg2-binary
 plotly
 matplotlib
 tabulate
+numpy
+google-generativeai
