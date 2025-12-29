@@ -27,7 +27,6 @@ def fetch_prob_data(year, metric_col, low, high):
     minguo_year = int(year) - 1911
     prev_minguo_year = minguo_year - 1
     
-    # 核心邏輯：對齊該年度能看到的 12 份月營收報表 (前年12月 ~ 當年11月)
     query = f"""
     WITH hit_table AS (
         SELECT stock_id, COUNT(*) as hits 
@@ -41,11 +40,11 @@ def fetch_prob_data(year, metric_col, low, high):
     ),
     perf_table AS (
         SELECT SPLIT_PART(symbol, '.', 1) as stock_id, 
-               ((year_close - year_open) / year_open)*100 as ret
+                ((year_close - year_open) / year_open)*100 as ret
         FROM stock_annual_k WHERE year = '{year}'
     )
     SELECT h.hits as "爆發次數", COUNT(*) as "股票檔數",
-           ROUND(AVG(p.ret)::numeric, 1) as "平均年度漲幅%", -- 👈 這裡已更新名稱
+           ROUND(AVG(p.ret)::numeric, 1) as "平均年度漲幅%",
            ROUND((COUNT(*) FILTER (WHERE p.ret > 20) * 100.0 / COUNT(*))::numeric, 1) as "勝率(>20%)",
            ROUND((COUNT(*) FILTER (WHERE p.ret > 100) * 100.0 / COUNT(*))::numeric, 1) as "翻倍率(>100%)"
     FROM hit_table h JOIN perf_table p ON h.stock_id = p.stock_id
@@ -78,7 +77,37 @@ if not df_prob.empty:
     st.subheader(f"📊 {target_year} 年：營收達標次數 vs 期望報酬對照表")
     st.table(df_prob)
     
-    # B. 點名功能：找出是哪些股票
+    # B. AI 分析助手區 (新增功能)
+    st.write("---")
+    st.subheader("🤖 AI 投資策略診斷")
+    
+    # 準備分析摘要
+    top_hit = df_prob.iloc[0]
+    prompt_text = (
+        f"請擔任專業量化分析師，分析台灣股市 {target_year} 年的營收表現與股價關聯。\n"
+        f"研究條件：營收 {study_metric} 落在 {growth_range[0]}% 至 {growth_range[1]}% 區間。\n"
+        f"數據摘要：\n"
+        f"- 當爆發次數達 {top_hit['爆發次數']} 次時，平均年度漲幅為 {top_hit['平均年度漲幅%']}%。\n"
+        f"- 該族群的勝率(>20%)為 {top_hit['勝率(>20%)']}%，翻倍率為 {top_hit['翻倍率(>100%)']}%。\n"
+        f"請針對以上統計結果，解讀『營收持續性』對股價的影響，並給予未來類似條件下的選股建議。"
+    )
+
+    col_prompt, col_link = st.columns(2)
+    with col_prompt:
+        st.write("📋 **第一步：複製提示詞**")
+        st.code(prompt_text, language="text")
+        st.caption("點擊代碼框右上角圖示即可快速複製。")
+
+    with col_link:
+        st.write("🚀 **第二步：選擇 AI 進行諮詢**")
+        encoded_prompt = urllib.parse.quote(prompt_text)
+        
+        st.link_button("🔥 開啟 ChatGPT (自動帶入)", f"https://chatgpt.com/?q={encoded_prompt}")
+        st.link_button("Ⓜ️ 開啟 Microsoft Copilot (需手動貼上)", "https://www.bing.com/chat")
+        st.link_button("🌐 開啟 Claude.ai (需手動貼上)", "https://claude.ai/")
+        st.warning("提醒：僅 ChatGPT 支援 URL 自動帶入內容；Copilot 與 Claude 請複製左側代碼後直接貼上詢問。")
+
+    # C. 點名功能
     st.write("---")
     st.subheader("🔍 區間名單點名")
     
@@ -117,7 +146,7 @@ if not df_prob.empty:
         st.write(f"🏆 {target_year} 年『營收達標 {selected_hits} 次』的股票清單：")
         st.dataframe(detail_df, use_container_width=True)
 
-    # C. 勝率視覺化
+    # D. 勝率視覺化
     st.write("---")
     st.subheader("🎯 期望值視覺化")
     chart_data = df_prob.set_index("爆發次數")[["勝率(>20%)", "翻倍率(>100%)"]]
