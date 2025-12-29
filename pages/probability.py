@@ -77,18 +77,22 @@ if not df_prob.empty:
     st.subheader(f"📊 {target_year} 年：營收達標次數 vs 期望報酬對照表")
     st.table(df_prob)
     
-    # B. AI 分析助手區 (全表帶入版)
+    # B. AI 分析助手區 (手動建構 Markdown 表格以避免依賴錯誤)
     st.write("---")
     st.subheader("🤖 AI 全數據策略診斷")
     
-    # 將 DataFrame 轉為 Markdown 表格字串
-    table_md = df_prob.to_markdown(index=False)
+    # 手動建立表格文字，不使用 to_markdown()
+    header = "| " + " | ".join(df_prob.columns) + " |"
+    separator = "| " + " | ".join(["---"] * len(df_prob.columns)) + " |"
+    rows = []
+    for _, row in df_prob.iterrows():
+        rows.append("| " + " | ".join(map(str, row.values)) + " |")
+    table_md = "\n".join([header, separator] + rows)
     
     prompt_text = (
         f"請擔任專業量化分析師，分析台灣股市 {target_year} 年的數據。\n"
         f"研究條件：營收 {study_metric} 落在 {growth_range[0]}% 至 {growth_range[1]}% 區間。\n\n"
-        f"以下是完整統計對照表：\n"
-        f"{table_md}\n\n"
+        f"以下是完整統計對照表：\n\n{table_md}\n\n"
         f"請針對這份表格進行深度分析：\n"
         f"1. 觀察『爆發次數』與『平均年度漲幅』、『勝率』之間是否存在正相關？\n"
         f"2. 找出期望值最高（兼顧樣本數與漲幅）的黃金次數區間。\n"
@@ -108,12 +112,11 @@ if not df_prob.empty:
         st.link_button("🔥 ChatGPT (全自動帶入)", f"https://chatgpt.com/?q={encoded_prompt}")
         st.link_button("Ⓜ️ Copilot (需貼上)", "https://www.bing.com/chat")
         st.link_button("🌐 Claude.ai (需貼上)", "https://claude.ai/")
-        st.info("💡 只有 ChatGPT 支援完整帶入。Copilot 因為網址長度限制，建議手動複製左側代碼貼上。")
+        st.info("💡 只有 ChatGPT 支援完整帶入。")
 
     # C. 點名功能
     st.write("---")
     st.subheader("🔍 區間名單點名")
-    
     hit_options = df_prob["爆發次數"].tolist()
     selected_hits = st.selectbox("選擇『爆發次數』查看具體名單：", hit_options)
     
