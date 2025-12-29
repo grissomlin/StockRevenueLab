@@ -111,7 +111,7 @@ if engine:
                     encoded_prompt = urllib.parse.quote(prompt_text)
                     
                     st.link_button("🔥 開啟 ChatGPT 分析 (自動帶入)", f"https://chatgpt.com/?q={encoded_prompt}")
-                    st.link_button("Ⓜ️ 開啟 Microsoft Copilot (自動帶入)", f"https://www.bing.com/chat?q={encoded_prompt}")
+                    st.link_button("Ⓜ️ 開啟 Microsoft Copilot (需手動貼上)", f"https://www.bing.com/chat?q={encoded_prompt}")
                     st.link_button("🌐 開啟 Claude.ai (需手動貼上)", "https://claude.ai/")
                     
                     st.warning("提醒：Copilot 與 ChatGPT 支援自動填入；Claude 建議複製左側代碼。")
