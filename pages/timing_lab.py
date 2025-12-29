@@ -30,7 +30,7 @@ def get_engine():
         st.error("❌ 資料庫連線失敗")
         st.stop()
 
-# ========== 3. 數據處理函數 ==========
+# ========== 3. 輔助函數 ==========
 def get_ai_summary_dist(df, col_name):
     data = df[col_name].dropna()
     if data.empty: return "無數據"
@@ -44,20 +44,7 @@ def get_ai_summary_dist(df, col_name):
             summary.append(f"{label}:{int(count)}檔({(count/total*100):.1f}%)")
     return " / ".join(summary)
 
-def create_big_hist(df, col_name, title, color, desc):
-    data = df[col_name].dropna()
-    if data.empty: return
-    counts, bins = np.histogram(data, bins=25)
-    bin_centers = 0.5 * (bins[:-1] + bins[1:])
-    texts = [f"<b>{int(c)}檔</b>" for c in counts]
-    fig = go.Figure(data=[go.Bar(x=bin_centers, y=counts, text=texts, textposition='outside', marker_color=color)])
-    fig.add_vline(x=0, line_dash="dash", line_color="black", line_width=2)
-    fig.update_layout(title=dict(text=title, font=dict(size=20)), height=400, margin=dict(t=80, b=40))
-    st.plotly_chart(fig, use_container_width=True)
-    st.info(f"💡 **科學解讀：** {desc}")
-    st.markdown("---")
-
-# ========== 4. 核心數據讀取 (SQL) ==========
+# ========== 4. 核心數據讀取 (含初次爆發邏輯) ==========
 @st.cache_data(ttl=3600)
 def fetch_timing_data(year, metric_col, limit, keyword):
     engine = get_engine()
@@ -106,44 +93,58 @@ def fetch_timing_data(year, metric_col, limit, keyword):
 
 # ========== 5. 使用介面區 ==========
 with st.sidebar:
-    st.header("🔬 策略參數設定")
+    st.header("🔬 參數設定")
     target_year = st.sidebar.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)], index=1)
-    study_metric = st.radio("成長指標", ["yoy_pct", "mom_pct"])
-    threshold = st.slider(f"設定 {study_metric} 爆發門檻 %", 30, 300, 100)
+    study_metric = st.radio("指標", ["yoy_pct", "mom_pct"])
+    threshold = st.slider(f"爆發門檻 %", 30, 300, 100)
     search_remark = st.text_input("🔍 關鍵字搜尋", "")
 
-st.title(f"🕵️ {target_year} 年 公告行為研究室")
+st.title(f"🕵️ {target_year} 年 公告行為研究室 4.0")
 
 df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
 
 if not df.empty:
-    # A. 數據看板
+    # A. 數據看板 (新增中位數)
     total_n = len(df)
-    m_avg, w_avg, a_avg, f_avg = round(df['pre_month'].mean(), 2), round(df['pre_week'].mean(), 2), round(df['announce_week'].mean(), 2), round(df['after_month'].mean(), 2)
+    
+    # 計算平均與中位數
+    stats = {
+        "m_mean": round(df['pre_month'].mean(), 2),
+        "m_median": round(df['pre_month'].median(), 2),
+        "w_mean": round(df['pre_week'].mean(), 2),
+        "a_mean": round(df['announce_week'].mean(), 2),
+        "f_median": round(df['after_month'].median(), 2)
+    }
     
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("樣本數", total_n)
-    c2.metric("T-1月平均", f"{m_avg}%")
-    c3.metric("T-1周平均", f"{w_avg}%")
-    c4.metric("T周平均", f"{a_avg}%")
-    c5.metric("T+1月平均", f"{f_avg}%")
+    c1.metric("樣本總數", total_n)
+    c2.metric("T-1月平均 / 中位", f"{stats['m_mean']}% / {stats['m_median']}%")
+    c3.metric("T-1周平均", f"{stats['w_mean']}%")
+    c4.metric("T周(公告)平均", f"{stats['a_mean']}%")
+    c5.metric("T+1月(波段)中位", f"{stats['f_median']}%")
     st.write("---")
     
-    # B. 原始明細
+    # B. 原始數據明細 (新增複製功能)
     st.subheader("🏆 原始數據明細")
+    
+    col_btn1, col_btn2 = st.columns([1, 4])
+    with col_btn1:
+        # 將全量數據轉成 Markdown 方便 AI 閱讀
+        copy_data = df[['stock_id', 'stock_name', 'growth_val', 'pre_month', 'after_month', 'remark']].to_markdown(index=False)
+        st.download_button(label="📋 下載全量明細 (CSV)", data=df.to_csv(index=False).encode('utf-8'), file_name=f'stock_data_{target_year}.csv')
+    
+    with col_btn2:
+        if st.checkbox("🔍 顯示全量 Markdown 數據 (用於手動複製給 AI)"):
+            st.code(copy_data, language="text")
+            st.caption("提示：這會包含所有檔名的漲幅與備註，適合餵給 Claude 3.5 或 Gemini Pro 進行深度個股診斷。")
+
     df['連結'] = df['stock_id'].apply(lambda x: f"https://www.wantgoo.com/stock/{x}/technical-chart")
     st.dataframe(df, use_container_width=True, height=400, column_config={"連結": st.column_config.LinkColumn("圖表", display_text="🔗")})
     st.write("---")
 
-    # C. 完整分佈圖
-    create_big_hist(df, "pre_month", "⓪ T-1 月 (大戶佈局區)", "#8a2be2", "公告前一個月的累積表現。")
-    create_big_hist(df, "pre_week", "❶ T-1 周 (短線預跑區)", "#ff4b4b", "公告前一周的反應。")
-    create_big_hist(df, "announce_week", "❷ T 周 (公告當周)", "#ffaa00", "公告正式釋出後的波動。")
-    create_big_hist(df, "after_month", "❹ 公告後一個月 (趨勢區)", "#1e90ff", "一個月後的波段結局。")
-
-    # D. AI 診斷專家系統 (不精簡、不刪功能)
+    # C. AI 診斷 (加入中位數對照)
     st.divider()
-    st.subheader("🤖 AI 投資行為診斷")
+    st.subheader("🤖 AI 投資行為診斷 (含中位數分析)")
     
     dist_txt = (
         f"1.T-1月分佈: {get_ai_summary_dist(df, 'pre_month')}\n"
@@ -152,61 +153,41 @@ if not df.empty:
         f"4.T+1月分佈: {get_ai_summary_dist(df, 'after_month')}"
     )
 
-    metric_name = "年增率 (YoY)" if study_metric == "yoy_pct" else "月增率 (MoM)"
     prompt_text = (
-        f"請擔任專業量化分析師，分析台股 {target_year} 年的營收公告數據。\n"
-        f"【實驗參數設定】：\n"
-        f"- 指標：{metric_name} / 爆發門檻：{threshold}% 以上 / 樣本特性：『初次爆發』\n"
-        f"- 樣本總數：{total_n} 檔\n\n"
-        f"【階段報酬數據】：\n"
-        f"- 公告前一個月: {m_avg}% / 公告前一週: {w_avg}% / 公告當週: {a_avg}% / 公告後一個月: {f_avg}%\n\n"
-        f"【分佈摘要數據】：\n{dist_txt}\n\n"
-        f"請針對以上數據診斷是否存在『主力提早佈局』痕跡，並給予投資操作建議。"
+        f"分析台股 {target_year} 年營收爆發行為。樣本數 {total_n}。\n"
+        f"【核心數據統計】：\n"
+        f"- T-1月：平均 {stats['m_mean']}%, 中位數 {stats['m_median']}%\n"
+        f"- T-1周：平均 {stats['w_mean']}%\n"
+        f"- T周(公告)：平均 {stats['a_mean']}%\n"
+        f"- T+1月(波段)：中位數 {stats['f_median']}%\n\n"
+        f"【分佈摘要】：\n{dist_txt}\n\n"
+        f"請解讀：當『平均值』遠大於『中位數』時，是否代表僅有少數飆股撐場？針對此統計特徵，建議投資人該如何佈局？"
     )
 
     col_p, col_l = st.columns([2, 1])
     with col_p:
-        st.write("📋 **待分析指令**")
         st.code(prompt_text, language="text")
-
+    
     with col_l:
-        st.write("🚀 **外部與內建診斷**")
         encoded_p = urllib.parse.quote(prompt_text)
+        st.link_button("🔥 ChatGPT (網址自動帶入)", f"https://chatgpt.com/?q={encoded_p}")
+        st.link_button("♊ 開啟 Gemini 官網 (強烈推薦貼上明細)", "https://gemini.google.com/app")
         
-        # 外部按鈕群組
-        st.link_button("🔥 ChatGPT (網址帶入)", f"https://chatgpt.com/?q={encoded_p}")
-        st.link_button("Ⓜ️ 通義千問 Qwen (需貼上)", "https://www.qianwen.com/chat")
-        st.link_button("♊ 開啟 Gemini 官網", "https://gemini.google.com/app")
-        
-        st.write("---")
-        if st.button("🔒 密碼驗證：啟動內建 Gemini 深度診斷"):
-            st.session_state.run_ai = True
+        if st.button("🔒 啟動內建 Gemini 深度診斷"):
+            st.session_state.run_ai_4 = True
 
-    # 內建 Gemini 邏輯
-    if st.session_state.get("run_ai", False):
-        with st.form("ai_form"):
-            user_pw = st.text_input("輸入研究員密碼：", type="password")
-            if st.form_submit_button("執行診斷"):
+    if st.session_state.get("run_ai_4", False):
+        with st.form("ai_4"):
+            user_pw = st.text_input("研究員密碼：", type="password")
+            if st.form_submit_button("執行"):
                 if user_pw == st.secrets["AI_ASK_PASSWORD"]:
-                    if AI_AVAILABLE:
-                        try:
-                            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                            # 自動獲取模型
-                            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                            target_model = next((m for m in models if "gemini-1.5-flash" in m), models[0])
-                            
-                            model = genai.GenerativeModel(target_model)
-                            with st.spinner("AI 正在解析大數據趨勢..."):
-                                response = model.generate_content(prompt_text)
-                                st.info(f"### 🤖 內建專家報告 ({target_model})")
-                                st.markdown(response.text)
-                        except Exception as e:
-                            st.error(f"AI 調用失敗: {e}")
-                    else: st.error("環境未安裝 google-generativeai")
+                    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    with st.spinner("AI 正在比對平均數與中位數..."):
+                        response = model.generate_content(prompt_text)
+                        st.info("### 🤖 內建專家診斷報告")
+                        st.markdown(response.text)
                 else: st.error("密碼錯誤")
 
 else:
     st.info("💡 查無符合條件之樣本。")
-
-st.markdown("---")
-st.caption("Developed by StockRevenueLab | 數據週期：2019-2025")
