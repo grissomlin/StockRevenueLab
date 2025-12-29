@@ -175,7 +175,7 @@ if not df.empty:
         
         # 外部按鈕群組
         st.link_button("🔥 ChatGPT (網址帶入)", f"https://chatgpt.com/?q={encoded_p}")
-        st.link_button("Ⓜ️ 通義千問 Qwen (需貼上)", "https://tongyi.aliyun.com/")
+        st.link_button("Ⓜ️ 通義千問 Qwen (需貼上)", "https://www.qianwen.com/chat")
         st.link_button("♊ 開啟 Gemini 官網", "https://gemini.google.com/app")
         
         st.write("---")
