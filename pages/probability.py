@@ -77,11 +77,10 @@ if not df_prob.empty:
     st.subheader(f"📊 {target_year} 年：營收達標次數 vs 期望報酬對照表")
     st.table(df_prob)
     
-    # B. AI 分析助手區 (手動建構 Markdown 表格以避免依賴錯誤)
+    # B. AI 分析助手區
     st.write("---")
     st.subheader("🤖 AI 全數據策略診斷")
     
-    # 手動建立表格文字，不使用 to_markdown()
     header = "| " + " | ".join(df_prob.columns) + " |"
     separator = "| " + " | ".join(["---"] * len(df_prob.columns)) + " |"
     rows = []
@@ -103,16 +102,13 @@ if not df_prob.empty:
     with col_prompt:
         st.write("📋 **第一步：複製完整分析數據**")
         st.code(prompt_text, language="text")
-        st.caption("提示：此提示詞已包含上方整張表格內容，AI 能進行全樣本趨勢分析。")
 
     with col_link:
         st.write("🚀 **第二步：送往 AI**")
         encoded_prompt = urllib.parse.quote(prompt_text)
-        
         st.link_button("🔥 ChatGPT (全自動帶入)", f"https://chatgpt.com/?q={encoded_prompt}")
         st.link_button("Ⓜ️ Copilot (需貼上)", "https://www.bing.com/chat")
         st.link_button("🌐 Claude.ai (需貼上)", "https://claude.ai/")
-        st.info("💡 只有 ChatGPT 支援完整帶入。")
 
     # C. 點名功能
     st.write("---")
@@ -151,6 +147,23 @@ if not df_prob.empty:
         detail_df = pd.read_sql_query(text(list_query), conn)
         st.write(f"🏆 {target_year} 年『營收達標 {selected_hits} 次』的股票清單：")
         st.dataframe(detail_df, use_container_width=True)
+        
+        # --- 新增功能：名單專屬 AI 按鈕 ---
+        st.write("### 🤖 針對此清單進行個股分析")
+        list_prompt = (
+            f"以下是 {target_year} 年營收達標 {selected_hits} 次的股票名單及其表現：\n\n"
+            f"{detail_df[['代號', '名稱', '年度漲幅%', '年增平均%', '關鍵備註']].to_markdown(index=False)}\n\n"
+            f"請根據上述資料（特別是『關鍵備註』），幫我找出名單中哪些股票屬於『一次性入帳、專案認列』而非『常態成長』？"
+            f"並分析為什麼有些股票營收年增平均很高，但年度漲幅卻很低的原因。"
+        )
+        
+        col_list_p, col_list_l = st.columns([2, 1])
+        with col_list_p:
+            st.code(list_prompt, language="text")
+        with col_list_l:
+            encoded_list_p = urllib.parse.quote(list_prompt)
+            st.link_button("🚀 詢問 AI 這份清單的貓膩", f"https://chatgpt.com/?q={encoded_list_p}")
+            st.caption("提示：這會將包含『備註』的完整表格送給 AI 解讀。")
 
     # D. 勝率視覺化
     st.write("---")
