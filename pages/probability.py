@@ -22,10 +22,10 @@ def get_engine():
         st.error("❌ 資料庫連線失敗，請檢查 Secrets 設定")
         st.stop()
 
-# ========== 3. 新增：獲取前後年度比較數據 ==========
+# ========== 3. 新增：獲取前後年度比較數據（包含中位數） ==========
 @st.cache_data(ttl=3600)
 def fetch_multi_year_data(stock_list, target_year):
-    """獲取指定股票在前後年度的表現"""
+    """獲取指定股票在前後年度的表現（包含中位數）"""
     if not stock_list:
         return pd.DataFrame()
     
@@ -42,14 +42,7 @@ def fetch_multi_year_data(stock_list, target_year):
         WHERE SPLIT_PART(symbol, '.', 1) IN ({stock_ids})
             AND year::integer BETWEEN {int(target_year)-2} AND {int(target_year)+1}
     )
-    SELECT 
-        stock_id,
-        MAX(CASE WHEN year = '{int(target_year)-2}' THEN annual_return END) as year_n2_return,
-        MAX(CASE WHEN year = '{int(target_year)-1}' THEN annual_return END) as year_n1_return,
-        MAX(CASE WHEN year = '{target_year}' THEN annual_return END) as year_target_return,
-        MAX(CASE WHEN year = '{int(target_year)+1}' THEN annual_return END) as year_p1_return
-    FROM years_data
-    GROUP BY stock_id
+    SELECT * FROM years_data;
     """
     
     with engine.connect() as conn:
@@ -80,6 +73,7 @@ def fetch_prob_data(year, metric_col, low, high):
     )
     SELECT h.hits as "爆發次數", COUNT(*) as "股票檔數",
            ROUND(AVG(p.ret)::numeric, 1) as "平均年度漲幅%",
+           ROUND(MEDIAN(p.ret)::numeric, 1) as "中位數漲幅%",
            ROUND((COUNT(*) FILTER (WHERE p.ret > 20) * 100.0 / COUNT(*))::numeric, 1) as "勝率(>20%)",
            ROUND((COUNT(*) FILTER (WHERE p.ret > 100) * 100.0 / COUNT(*))::numeric, 1) as "翻倍率(>100%)",
            ROUND(MIN(p.ret)::numeric, 1) as "最低漲幅%",
@@ -99,6 +93,7 @@ def calculate_expected_value(df):
         hits = row["爆發次數"]
         count = row["股票檔數"]
         avg_return = row["平均年度漲幅%"]
+        median_return = row["中位數漲幅%"]
         win_rate = row["勝率(>20%)"] / 100
         
         # 簡單期望值 = 平均報酬 * 股票檔數（權重）
@@ -110,13 +105,18 @@ def calculate_expected_value(df):
         # 成功率調整期望值
         success_adjusted = avg_return * win_rate
         
+        # 平均數與中位數差異
+        mean_median_diff = avg_return - median_return
+        
         results.append({
             "爆發次數": hits,
             "股票檔數": count,
             "平均年度漲幅%": avg_return,
+            "中位數漲幅%": median_return,
+            "平均-中位差": round(mean_median_diff, 1),
             "勝率(>20%)": row["勝率(>20%)"],
             "翻倍率(>100%)": row["翻倍率(>100%)"],
-            "期望值分數": round(expected_value / 100, 2),  # 縮放
+            "期望值分數": round(expected_value / 100, 2),
             "風險調整分數": round(risk_adjusted, 2),
             "成功率分數": round(success_adjusted, 2),
             "綜合評分": round((expected_value/100 + risk_adjusted + success_adjusted) / 3, 2)
@@ -171,12 +171,14 @@ if not df_prob.empty:
     st.metric("總樣本股票數", f"{total_stocks} 檔")
     
     # 顯示原始表格
-    st.dataframe(df_prob.style.format({
+    display_cols = ["爆發次數", "股票檔數", "平均年度漲幅%", "中位數漲幅%", 
+                    "勝率(>20%)", "翻倍率(>100%)", "標準差%"]
+    
+    st.dataframe(df_prob[display_cols].style.format({
         "平均年度漲幅%": "{:.1f}%",
+        "中位數漲幅%": "{:.1f}%",
         "勝率(>20%)": "{:.1f}%", 
         "翻倍率(>100%)": "{:.1f}%",
-        "最低漲幅%": "{:.1f}%",
-        "最高漲幅%": "{:.1f}%",
         "標準差%": "{:.1f}%"
     }), use_container_width=True)
     
@@ -185,7 +187,7 @@ if not df_prob.empty:
         col1, col2 = st.columns(2)
         
         with col1:
-            # 爆發次數 vs 平均報酬
+            # 爆發次數 vs 平均報酬與中位數
             fig1 = go.Figure()
             fig1.add_trace(go.Bar(
                 x=df_prob["爆發次數"],
@@ -195,37 +197,48 @@ if not df_prob.empty:
             ))
             fig1.add_trace(go.Scatter(
                 x=df_prob["爆發次數"],
-                y=df_prob["勝率(>20%)"],
-                name='勝率(>20%)',
-                yaxis='y2',
+                y=df_prob["中位數漲幅%"],
+                name='中位數漲幅%',
                 mode='lines+markers',
-                line=dict(color='red', width=2)
+                line=dict(color='darkblue', width=2)
             ))
             fig1.update_layout(
                 title=f"{metric_name}爆發次數 vs 年度表現",
-                yaxis=dict(title='平均年度漲幅%'),
-                yaxis2=dict(title='勝率(%)', overlaying='y', side='right'),
+                yaxis_title='漲幅 %',
                 height=400
             )
             st.plotly_chart(fig1, use_container_width=True)
         
         with col2:
-            # 股票檔數分佈
+            # 平均數 vs 中位數差異
+            df_prob['平均-中位差'] = df_prob['平均年度漲幅%'] - df_prob['中位數漲幅%']
+            
             fig2 = go.Figure()
             fig2.add_trace(go.Bar(
                 x=df_prob["爆發次數"],
-                y=df_prob["股票檔數"],
-                name='股票檔數',
-                marker_color='lightgreen',
-                text=df_prob["股票檔數"],
+                y=df_prob["平均-中位差"],
+                name='平均-中位數差異',
+                marker_color='coral',
+                text=df_prob["平均-中位差"].round(1),
                 textposition='outside'
             ))
             fig2.update_layout(
-                title="各爆發次數的樣本分佈",
-                yaxis_title="股票檔數",
+                title="平均數與中位數差異分析",
+                yaxis_title="差異 %",
                 height=400
             )
             st.plotly_chart(fig2, use_container_width=True)
+            
+            # 解釋差異
+            pos_diff_count = (df_prob['平均-中位差'] > 0).sum()
+            pos_diff_percent = pos_diff_count / len(df_prob) * 100
+            
+            st.info(f"""
+            **平均數與中位數差異分析**：
+            - {pos_diff_count}/{len(df_prob)} 個區間({pos_diff_percent:.1f}%) 平均數 > 中位數
+            - **表示多數區間存在右偏分佈**：少數股票漲幅極高，拉高了平均值
+            - 當差異越大，代表該爆發次數區間的**右尾效應**越明顯
+            """)
     
     # ========== C. 期望值分析 ==========
     if show_expected_value and len(df_prob) > 1:
@@ -235,17 +248,24 @@ if not df_prob.empty:
         expected_df = calculate_expected_value(df_prob)
         
         # 找出最佳區間
-        best_idx = expected_df["綜合評分"].idxmax()
-        best_hits = expected_df.loc[best_idx, "爆發次數"]
-        best_score = expected_df.loc[best_idx, "綜合評分"]
+        if '綜合評分' in expected_df.columns:
+            best_idx = expected_df["綜合評分"].idxmax()
+            best_hits = expected_df.loc[best_idx, "爆發次數"]
+            best_score = expected_df.loc[best_idx, "綜合評分"]
+        else:
+            best_hits = df_prob.loc[0, "爆發次數"]
+            best_score = 0
         
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("最佳爆發次數", f"{best_hits} 次")
         col_b.metric("綜合評分", f"{best_score:.2f}")
-        col_c.metric("該區間樣本數", f"{int(expected_df.loc[best_idx, '股票檔數'])} 檔")
+        col_c.metric("該區間樣本數", f"{int(expected_df.loc[best_idx if 'best_idx' in locals() else 0, '股票檔數'])} 檔")
         
         # 顯示期望值表格
         st.dataframe(expected_df.style.format({
+            "平均年度漲幅%": "{:.1f}",
+            "中位數漲幅%": "{:.1f}",
+            "平均-中位差": "{:.1f}",
             "期望值分數": "{:.2f}",
             "風險調整分數": "{:.2f}",
             "成功率分數": "{:.2f}",
@@ -263,7 +283,7 @@ if not df_prob.empty:
     rows = ["| " + " | ".join(map(str, row.values)) + " |" for _, row in df_prob.iterrows()]
     table_md = "\n".join([header, sep] + rows)
     
-    # 建構完整的提示詞（包含所有使用者選擇的參數）
+    # 建構完整的提示詞
     prompt_text = f"""
 # {target_year}年台股營收爆發次數與年度報酬關聯分析
 
@@ -291,12 +311,12 @@ if not df_prob.empty:
 請以專業量化分析師的角度，針對以上數據回答以下問題：
 
 ### 1. 相關性分析
-- 「爆發次數」與「平均年度漲幅」、「勝率(>20%)」之間是否存在正相關？
+- 「爆發次數」與「平均年度漲幅」、「中位數漲幅」、「勝率(>20%)」之間是否存在正相關？
 - 從哪些數據點可以支持你的結論？
 
-### 2. 異常值解讀
-- 為什麼爆發12次的2檔股票能有如此驚人的表現（平均221.8%）？
-- 爆發11次的單一股票為什麼表現這麼差（-24.4%）？可能的原因是什麼？
+### 2. 平均數與中位數差異分析
+- 哪些爆發次數區間的「平均-中位數」差異最大？這代表什麼意義？
+- 右尾效應（平均>中位）最明顯的區間是哪個？對投資策略有何啟示？
 
 ### 3. 投資策略建議
 - 根據期望值（兼顧樣本數與漲幅），哪個「爆發次數區間」是最佳投資標的？
@@ -325,8 +345,8 @@ if not df_prob.empty:
             - 分析爆發次數與年度報酬的關係
             
             **關鍵發現**：
-            - 最高爆發12次：2檔，平均漲幅221.8%
-            - 最低爆發1次：229檔，平均漲幅16.3%
+            - 最高爆發12次：2檔，平均漲幅{df_prob.loc[0, '平均年度漲幅%'] if len(df_prob) > 0 else 'N/A'}%
+            - 最低爆發1次：{df_prob.loc[len(df_prob)-1, '股票檔數'] if len(df_prob) > 0 else 'N/A'}檔，平均漲幅{df_prob.loc[len(df_prob)-1, '平均年度漲幅%'] if len(df_prob) > 0 else 'N/A'}%
             - 樣本分佈：次數越少，檔數越多
             
             **待解問題**：
@@ -366,7 +386,7 @@ if not df_prob.empty:
         st.markdown("### ⚡ 快速統計分析結果")
         
         # 計算相關係數
-        numeric_cols = ["平均年度漲幅%", "勝率(>20%)", "翻倍率(>100%)"]
+        numeric_cols = ["平均年度漲幅%", "中位數漲幅%", "勝率(>20%)", "翻倍率(>100%)"]
         correlations = {}
         
         for col in numeric_cols:
@@ -374,24 +394,27 @@ if not df_prob.empty:
                 corr = df_prob["爆發次數"].corr(df_prob[col])
                 correlations[col] = round(corr, 3)
         
-        col_x, col_y, col_z = st.columns(3)
-        for (col_name, corr_value), col in zip(correlations.items(), [col_x, col_y, col_z]):
+        # 顯示相關係數
+        cols = st.columns(len(correlations))
+        for (col_name, corr_value), col in zip(correlations.items(), cols):
             with col:
+                corr_label = "強正相關" if corr_value > 0.7 else ("中正相關" if corr_value > 0.3 else ("弱相關" if corr_value > 0.1 else ("無相關" if abs(corr_value) <= 0.1 else ("負相關" if corr_value < 0 else "N/A"))))
                 st.metric(
-                    f"與{col_name}相關係數",
+                    f"爆發次數 vs {col_name}",
                     f"{corr_value}",
-                    delta="正相關" if corr_value > 0.3 else ("負相關" if corr_value < -0.3 else "弱相關")
+                    corr_label
                 )
         
         # 提供簡單結論
         st.info(f"""
         **初步觀察結論**：
-        1. **相關性**: 爆發次數與年度報酬呈現{'強正相關' if correlations.get('平均年度漲幅%', 0) > 0.5 else '弱相關或無關'}
+        1. **相關性**: 爆發次數與年度報酬呈現{correlations.get('平均年度漲幅%', 0) > 0.5 and '強正相關' or '弱相關或無關'}
         2. **最佳區間**: 從期望值看，爆發{best_hits if 'best_hits' in locals() else '4-6'}次可能是最佳區間
         3. **風險提示**: 高爆發次數(>10次)樣本過少，統計意義有限
+        4. **右尾效應**: 平均數 > 中位數的區間有{pos_diff_count if 'pos_diff_count' in locals() else '多數'}個，顯示存在右偏分佈
         """)
     
-    # ========== E. 前後年度比較分析 ==========
+    # ========== E. 前後年度比較分析（包含中位數） ==========
     if show_multi_year:
         st.markdown("---")
         st.subheader("📈 前後年度表現比較分析")
@@ -426,34 +449,84 @@ if not df_prob.empty:
                 # 按爆發次數分組分析
                 merged_df = pd.merge(stock_list_df, multi_year_df, on='stock_id')
                 
-                # 計算各爆發次數的前後年度表現
-                year_comparison = merged_df.groupby('hits').agg({
-                    'year_n2_return': 'mean',
-                    'year_n1_return': 'mean', 
-                    'year_target_return': 'mean',
-                    'year_p1_return': 'mean'
-                }).round(1)
+                # 計算各爆發次數的前後年度表現（平均數）
+                year_comparison_mean = merged_df.groupby(['hits', 'year']).agg({
+                    'annual_return': 'mean'
+                }).unstack().round(1)
+                
+                # 計算各爆發次數的前後年度表現（中位數）
+                year_comparison_median = merged_df.groupby(['hits', 'year']).agg({
+                    'annual_return': 'median'
+                }).unstack().round(1)
                 
                 # 重新命名欄位
-                year_comparison.columns = [
-                    f'前2年({int(target_year)-2})',
-                    f'前1年({int(target_year)-1})', 
-                    f'目標年({target_year})',
-                    f'後1年({int(target_year)+1})'
-                ]
+                year_comparison_mean.columns = [f'{col[1]}_平均' for col in year_comparison_mean.columns]
+                year_comparison_median.columns = [f'{col[1]}_中位數' for col in year_comparison_median.columns]
                 
-                st.write("### 前後年度平均報酬比較")
-                st.dataframe(year_comparison.style.format("{:.1f}%"), use_container_width=True)
+                # 合併平均數和中位數
+                year_comparison = pd.concat([year_comparison_mean, year_comparison_median], axis=1)
+                
+                # 重新排列列，使每個年度的平均數和中位數相鄰
+                # 先獲取所有唯一的年份
+                years = sorted(set([col.split('_')[0] for col in year_comparison.columns]))
+                
+                new_order = []
+                for year in years:
+                    if f'{year}_平均' in year_comparison.columns:
+                        new_order.append(f'{year}_平均')
+                    if f'{year}_中位數' in year_comparison.columns:
+                        new_order.append(f'{year}_中位數')
+                
+                year_comparison = year_comparison[new_order]
+                
+                # 重新命名年份為更容易理解的形式
+                year_mapping = {
+                    str(int(target_year)-2): f'前2年({int(target_year)-2})',
+                    str(int(target_year)-1): f'前1年({int(target_year)-1})',
+                    target_year: f'目標年({target_year})',
+                    str(int(target_year)+1): f'後1年({int(target_year)+1})'
+                }
+                
+                year_comparison.columns = [year_mapping.get(col.split('_')[0], col.split('_')[0]) + '_' + col.split('_')[1] for col in year_comparison.columns]
+                
+                st.write("### 前後年度平均報酬與中位數比較 (%)")
+                st.dataframe(year_comparison.style.format("{:.1f}"), use_container_width=True)
                 
                 # 添加分析問題
                 st.markdown("""
                 **前後年度分析問題**：
-                1. 高爆發次數的股票，是否在**前一年**就已經有優異表現？（提前反應）
-                2. 高爆發次數的股票，在**後一年**是否仍維持強勢？（持續性）
-                3. 是否存在「利多出盡」現象？（目標年大漲，後一年下跌）
+                1. **提前反應分析**：高爆發次數的股票，是否在**前一年**就已經有優異表現？
+                2. **持續性分析**：高爆發次數的股票，在**後一年**是否仍維持強勢？
+                3. **利多出盡現象**：是否存在目標年大漲，但後一年下跌的情況？
+                4. **中位數 vs 平均數**：哪些年度/爆發次數的「平均數與中位數差異」最大？代表什麼？
                 """)
+                
+                # 添加簡單洞察
+                if not year_comparison.empty:
+                    # 找出提前反應最明顯的區間
+                    early_response = {}
+                    for hits in year_comparison.index:
+                        target_year_col = f'目標年({target_year})_平均'
+                        prev_year_col = f'前1年({int(target_year)-1})_平均'
+                        
+                        if target_year_col in year_comparison.columns and prev_year_col in year_comparison.columns:
+                            target_return = year_comparison.loc[hits, target_year_col]
+                            prev_return = year_comparison.loc[hits, prev_year_col]
+                            
+                            if pd.notna(target_return) and pd.notna(prev_return):
+                                early_response[hits] = prev_return
+                    
+                    if early_response:
+                        max_hits = max(early_response, key=early_response.get)
+                        max_return = early_response[max_hits]
+                        
+                        st.info(f"""
+                        **洞察發現**：
+                        - **提前反應最明顯**：爆發{max_hits}次的股票，前一年平均漲幅{max_return:.1f}%
+                        - **投資啟示**：如果前一年已大漲，可能已反映部分預期，需注意追高風險
+                        """)
     
-    # ========== F. 區間名單點名功能 ==========
+    # ========== F. 區間名單點名功能（修正下載按鈕錯誤） ==========
     st.markdown("---")
     st.subheader("🔍 詳細名單分析")
     
@@ -496,13 +569,15 @@ if not df_prob.empty:
         # 名單統計
         if len(detail_df) > 0:
             avg_return = detail_df["年度漲幅%"].mean()
+            median_return = detail_df["年度漲幅%"].median()
             positive_count = (detail_df["年度漲幅%"] > 0).sum()
             positive_rate = positive_count / len(detail_df) * 100
             
-            col_s1, col_s2, col_s3 = st.columns(3)
+            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
             col_s1.metric("平均年度漲幅", f"{avg_return:.1f}%")
-            col_s2.metric("上漲檔數", f"{positive_count}檔")
-            col_s3.metric("上漲比例", f"{positive_rate:.1f}%")
+            col_s2.metric("中位數漲幅", f"{median_return:.1f}%")
+            col_s3.metric("上漲檔數", f"{positive_count}檔")
+            col_s4.metric("上漲比例", f"{positive_rate:.1f}%")
         
         st.dataframe(detail_df, use_container_width=True)
         
@@ -530,6 +605,7 @@ if not df_prob.empty:
 
 ## 名單統計摘要
 - 平均年度漲幅: {avg_return:.1f}%
+- 中位數漲幅: {median_return:.1f}%
 - 上漲股票比例: {positive_rate:.1f}%
 - 最高漲幅: {detail_df['年度漲幅%'].max():.1f}%
 - 最低漲幅: {detail_df['年度漲幅%'].min():.1f}%
@@ -545,11 +621,15 @@ if not df_prob.empty:
    - 為什麼有些股票「平均增長%」很高，但「年度漲幅%」卻不突出？
    - 以8476台境為例，如果數據中存在，請分析其高增長但低漲幅的原因
 
-3. **投資啟示**：
+3. **平均數與中位數分析**：
+   - 平均漲幅({avg_return:.1f}%) vs 中位數漲幅({median_return:.1f}%)的差異代表什麼？
+   - 是否存在右尾效應（少數股票漲幅極高，拉高平均）？
+
+4. **投資啟示**：
    - 從這份名單中，投資人應該注意哪些關鍵指標？
    - 如何區分「真成長」與「一次性增長」？
 
-4. **策略建議**：
+5. **策略建議**：
    - 對於爆發{selected_hits}次的股票，最佳的買賣時機為何？
    - 需要搭配哪些技術指標或基本面條件來提高勝率？
 """
@@ -561,9 +641,14 @@ if not df_prob.empty:
             encoded_list_p = urllib.parse.quote(list_prompt)
             st.link_button("🔥 ChatGPT 分析名單", f"https://chatgpt.com/?q={encoded_list_p}")
             st.link_button("🔍 DeepSeek 分析", "https://chat.deepseek.com/")
-            st.link_button("📊 下載名單CSV", 
-                         data=detail_df.to_csv(index=False).encode('utf-8'),
-                         file_name=f'burst_{selected_hits}_stocks_{target_year}.csv')
+            
+            # 修正：使用 st.download_button 而不是 st.link_button
+            st.download_button(
+                label="📊 下載名單CSV",
+                data=detail_df.to_csv(index=False).encode('utf-8'),
+                file_name=f'burst_{selected_hits}_stocks_{target_year}.csv',
+                mime='text/csv'
+            )
 
 else:
     st.warning(f"⚠️ 在 {target_year} 年及設定條件下，沒有符合條件的樣本。")
