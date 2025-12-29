@@ -17,10 +17,10 @@ def get_engine():
         connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
         return create_engine(connection_string)
     except Exception:
-        st.error("❌ 資料庫連線失敗")
+        st.error("❌ 資料庫連線失敗，請檢查 Secrets 設定")
         st.stop()
 
-# ========== 3. 數據抓取引擎 ==========
+# ========== 3. 數據抓取引擎 (精確對齊年度報表) ==========
 @st.cache_data(ttl=3600)
 def fetch_prob_data(year, metric_col, low, high):
     engine = get_engine()
@@ -77,16 +77,15 @@ if not df_prob.empty:
     st.subheader(f"📊 {target_year} 年：營收達標次數 vs 期望報酬對照表")
     st.table(df_prob)
     
-    # B. AI 分析助手區
+    # B. AI 分析助手區 (全數據帶入版)
     st.write("---")
     st.subheader("🤖 AI 全數據策略診斷")
     
+    # 手動構建 Markdown 表格以確保不依賴 tabulate 套件
     header = "| " + " | ".join(df_prob.columns) + " |"
-    separator = "| " + " | ".join(["---"] * len(df_prob.columns)) + " |"
-    rows = []
-    for _, row in df_prob.iterrows():
-        rows.append("| " + " | ".join(map(str, row.values)) + " |")
-    table_md = "\n".join([header, separator] + rows)
+    sep = "| " + " | ".join(["---"] * len(df_prob.columns)) + " |"
+    rows = ["| " + " | ".join(map(str, row.values)) + " |" for _, row in df_prob.iterrows()]
+    table_md = "\n".join([header, sep] + rows)
     
     prompt_text = (
         f"請擔任專業量化分析師，分析台灣股市 {target_year} 年的數據。\n"
@@ -102,15 +101,18 @@ if not df_prob.empty:
     with col_prompt:
         st.write("📋 **第一步：複製完整分析數據**")
         st.code(prompt_text, language="text")
+        st.caption("提示：此提示詞已包含上方整張表格內容。")
 
     with col_link:
         st.write("🚀 **第二步：送往 AI**")
         encoded_prompt = urllib.parse.quote(prompt_text)
+        
         st.link_button("🔥 ChatGPT (全自動帶入)", f"https://chatgpt.com/?q={encoded_prompt}")
         st.link_button("Ⓜ️ Copilot (需貼上)", "https://www.bing.com/chat")
         st.link_button("🌐 Claude.ai (需貼上)", "https://claude.ai/")
+        st.info("💡 只有 ChatGPT 支援完整自動帶入。")
 
-    # C. 點名功能
+    # C. 區間名單點名功能
     st.write("---")
     st.subheader("🔍 區間名單點名")
     hit_options = df_prob["爆發次數"].tolist()
@@ -148,22 +150,29 @@ if not df_prob.empty:
         st.write(f"🏆 {target_year} 年『營收達標 {selected_hits} 次』的股票清單：")
         st.dataframe(detail_df, use_container_width=True)
         
-        # --- 新增功能：名單專屬 AI 按鈕 ---
-        st.write("### 🤖 針對此清單進行個股分析")
+        # --- 名單專屬 AI 分析按鈕 ---
+        st.write("### 🤖 針對此清單進行深度診斷")
+        # 建構清單 Markdown
+        l_header = "| " + " | ".join(detail_df.columns) + " |"
+        l_sep = "| " + " | ".join(["---"] * len(detail_df.columns)) + " |"
+        l_rows = ["| " + " | ".join(map(str, r.values)) + " |" for _, r in detail_df.iterrows()]
+        list_md = "\n".join([l_header, l_sep] + l_rows)
+
         list_prompt = (
-            f"以下是 {target_year} 年營收達標 {selected_hits} 次的股票名單及其表現：\n\n"
-            f"{detail_df[['代號', '名稱', '年度漲幅%', '年增平均%', '關鍵備註']].to_markdown(index=False)}\n\n"
-            f"請根據上述資料（特別是『關鍵備註』），幫我找出名單中哪些股票屬於『一次性入帳、專案認列』而非『常態成長』？"
-            f"並分析為什麼有些股票營收年增平均很高，但年度漲幅卻很低的原因。"
+            f"以下是 {target_year} 年營收達標 {selected_hits} 次的股票名單及其年度表現：\n\n"
+            f"{list_md}\n\n"
+            f"請根據資料中的『關鍵備註』與『年度漲幅%』，分析這群股票是否具有共同的產業特徵或認列特性（例如專案入帳）。"
+            f"並解釋為什麼部分股票年增平均極高（如 8476 台境），但年度漲幅卻不突出的原因。"
         )
         
-        col_list_p, col_list_l = st.columns([2, 1])
-        with col_list_p:
+        col_lp, col_ll = st.columns([2, 1])
+        with col_lp:
             st.code(list_prompt, language="text")
-        with col_list_l:
+        with col_ll:
             encoded_list_p = urllib.parse.quote(list_prompt)
-            st.link_button("🚀 詢問 AI 這份清單的貓膩", f"https://chatgpt.com/?q={encoded_list_p}")
-            st.caption("提示：這會將包含『備註』的完整表格送給 AI 解讀。")
+            st.link_button("🔥 ChatGPT 診斷名單", f"https://chatgpt.com/?q={encoded_list_p}")
+            st.link_button("Ⓜ️ Copilot (需貼上)", "https://www.bing.com/chat")
+            st.link_button("🌐 Claude.ai (需貼上)", "https://claude.ai/")
 
     # D. 勝率視覺化
     st.write("---")
