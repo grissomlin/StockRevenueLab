@@ -30,7 +30,7 @@ def get_engine():
         st.error("❌ 資料庫連線失敗")
         st.stop()
 
-# ========== 3. 輔助函數 ==========
+# ========== 3. 數據輔助函數 ==========
 def get_ai_summary_dist(df, col_name):
     data = df[col_name].dropna()
     if data.empty: return "無數據"
@@ -44,7 +44,31 @@ def get_ai_summary_dist(df, col_name):
             summary.append(f"{label}:{int(count)}檔({(count/total*100):.1f}%)")
     return " / ".join(summary)
 
-# ========== 4. 核心數據讀取 (含初次爆發邏輯) ==========
+def create_big_hist(df, col_name, title, color, desc):
+    """繪製直方圖並顯示中位數與平均線"""
+    data = df[col_name].dropna()
+    if data.empty: return
+    
+    mean_val = data.mean()
+    median_val = data.median()
+    
+    counts, bins = np.histogram(data, bins=25)
+    bin_centers = 0.5 * (bins[:-1] + bins[1:])
+    texts = [f"<b>{int(c)}檔</b>" for c in counts]
+    
+    fig = go.Figure(data=[go.Bar(x=bin_centers, y=counts, text=texts, textposition='outside', marker_color=color)])
+    
+    # 加入垂直參考線
+    fig.add_vline(x=0, line_dash="dash", line_color="black", line_width=1)
+    fig.add_vline(x=mean_val, line_color="red", line_width=2, annotation_text=f"平均 {mean_val:.1f}%")
+    fig.add_vline(x=median_val, line_color="blue", line_width=2, annotation_text=f"中位 {median_val:.1f}%", annotation_position="bottom right")
+    
+    fig.update_layout(title=dict(text=title, font=dict(size=20)), height=400, margin=dict(t=80, b=40))
+    st.plotly_chart(fig, use_container_width=True)
+    st.info(f"💡 **科學解讀：** {desc}")
+    st.markdown("---")
+
+# ========== 4. 核心 SQL 邏輯 (初次爆發) ==========
 @st.cache_data(ttl=3600)
 def fetch_timing_data(year, metric_col, limit, keyword):
     engine = get_engine()
@@ -99,95 +123,106 @@ with st.sidebar:
     threshold = st.slider(f"爆發門檻 %", 30, 300, 100)
     search_remark = st.text_input("🔍 關鍵字搜尋", "")
 
-st.title(f"🕵️ {target_year} 年 公告行為研究室 4.0")
+st.title(f"🕵️ {target_year} 年 公告行為研究室 4.2")
 
 df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
 
 if not df.empty:
-    # A. 數據看板 (新增中位數)
+    # A. 數據看板 (Mean vs Median)
     total_n = len(df)
     
-    # 計算平均與中位數
-    stats = {
-        "m_mean": round(df['pre_month'].mean(), 2),
-        "m_median": round(df['pre_month'].median(), 2),
-        "w_mean": round(df['pre_week'].mean(), 2),
-        "a_mean": round(df['announce_week'].mean(), 2),
-        "f_median": round(df['after_month'].median(), 2)
-    }
-    
+    def get_stats(col):
+        return round(df[col].mean(), 2), round(df[col].median(), 2)
+
+    m_mean, m_med = get_stats('pre_month')
+    w_mean, w_med = get_stats('pre_week')
+    a_mean, a_med = get_stats('announce_week')
+    f_mean, f_med = get_stats('after_month')
+
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("樣本總數", total_n)
-    c2.metric("T-1月平均 / 中位", f"{stats['m_mean']}% / {stats['m_median']}%")
-    c3.metric("T-1周平均", f"{stats['w_mean']}%")
-    c4.metric("T周(公告)平均", f"{stats['a_mean']}%")
-    c5.metric("T+1月(波段)中位", f"{stats['f_median']}%")
+    c1.metric("樣本總數", f"{total_n} 檔")
+    c2.metric("T-1月(平均/中位)", f"{m_mean}%", f"中位: {m_med}%")
+    c3.metric("T-1周(平均/中位)", f"{w_mean}%", f"中位: {w_med}%")
+    c4.metric("T周公告(平均/中位)", f"{a_mean}%", f"中位: {a_med}%")
+    c5.metric("T+1月波段(平均/中位)", f"{f_mean}%", f"中位: {f_med}%")
     st.write("---")
     
-    # B. 原始數據明細 (新增複製功能)
+    # B. 原始明細清單 (含複製功能)
     st.subheader("🏆 原始數據明細")
-    
     col_btn1, col_btn2 = st.columns([1, 4])
     with col_btn1:
-        # 將全量數據轉成 Markdown 方便 AI 閱讀
-        copy_data = df[['stock_id', 'stock_name', 'growth_val', 'pre_month', 'after_month', 'remark']].to_markdown(index=False)
-        st.download_button(label="📋 下載全量明細 (CSV)", data=df.to_csv(index=False).encode('utf-8'), file_name=f'stock_data_{target_year}.csv')
-    
+        st.download_button(label="📋 下載明細 CSV", data=df.to_csv(index=False).encode('utf-8'), file_name=f'stock_{target_year}.csv')
     with col_btn2:
-        if st.checkbox("🔍 顯示全量 Markdown 數據 (用於手動複製給 AI)"):
-            st.code(copy_data, language="text")
-            st.caption("提示：這會包含所有檔名的漲幅與備註，適合餵給 Claude 3.5 或 Gemini Pro 進行深度個股診斷。")
+        if st.checkbox("🔍 產生 AI 全量複製指令 (Markdown 表格)"):
+            # 只取關鍵欄位以防字數過多
+            copy_data = df[['stock_id', 'stock_name', 'growth_val', 'pre_month', 'pre_week', 'after_month', 'remark']].head(500).to_markdown(index=False)
+            st.code(f"請針對以下 2024 年營收爆發股數據進行診斷，分析其 T-1 階段的『右尾(Outliers)』分佈與產業備註，判斷是否有資訊先行跡象：\n\n{copy_data}", language="text")
+            st.caption("提示：為確保 AI 讀取，此處僅列出前 500 筆。")
 
     df['連結'] = df['stock_id'].apply(lambda x: f"https://www.wantgoo.com/stock/{x}/technical-chart")
     st.dataframe(df, use_container_width=True, height=400, column_config={"連結": st.column_config.LinkColumn("圖表", display_text="🔗")})
     st.write("---")
 
-    # C. AI 診斷 (加入中位數對照)
-    st.divider()
-    st.subheader("🤖 AI 投資行為診斷 (含中位數分析)")
+    # C. 完整五張分佈圖 (Mean/Median 並列)
+    st.subheader("📊 階段報酬分佈與偏度分析")
     
-    dist_txt = (
-        f"1.T-1月分佈: {get_ai_summary_dist(df, 'pre_month')}\n"
-        f"2.T-1周分佈: {get_ai_summary_dist(df, 'pre_week')}\n"
-        f"3.T周分佈: {get_ai_summary_dist(df, 'announce_week')}\n"
-        f"4.T+1月分佈: {get_ai_summary_dist(df, 'after_month')}"
-    )
+    create_big_hist(df, "pre_month", "⓪ T-1 月 (大戶佈局區)", "#8a2be2", 
+                    "若平均值顯著大於中位數，代表大資金早已進場『拉抬少數權值股』。")
+    
+    create_big_hist(df, "pre_week", "❶ T-1 周 (短線預跑區)", "#ff4b4b", 
+                    "若中位數仍趨近於 0 但平均值為正，代表只有極少數業內資訊領先者在偷跑。")
+    
+    create_big_hist(df, "announce_week", "❷ T 周 (公告當周：市場反應)", "#ffaa00", 
+                    "營收正式釋出後。若平均與中位線重合，代表利多已成為市場共識。")
+    
+    create_big_hist(df, "after_week_1", "❸ T+1 周 (公告後續：慣性區)", "#32cd32", 
+                    "利多公佈後的追價動能。")
 
+    create_big_hist(df, "after_month", "❹ 公告後一個月 (趨勢結局)", "#1e90ff", 
+                    "波段收尾。若中位數為負代表大多數爆發股最終都會回吐，只有少數強者恆強。")
+
+    # D. AI 診斷 (引入偏度診斷)
+    st.divider()
+    st.subheader("🤖 AI 投資行為深度診斷")
+    dist_txt = f"T-1月分佈: {get_ai_summary_dist(df, 'pre_month')}\nT+1月分佈: {get_ai_summary_dist(df, 'after_month')}"
     prompt_text = (
         f"分析台股 {target_year} 年營收爆發行為。樣本數 {total_n}。\n"
-        f"【核心數據統計】：\n"
-        f"- T-1月：平均 {stats['m_mean']}%, 中位數 {stats['m_median']}%\n"
-        f"- T-1周：平均 {stats['w_mean']}%\n"
-        f"- T周(公告)：平均 {stats['a_mean']}%\n"
-        f"- T+1月(波段)：中位數 {stats['f_median']}%\n\n"
+        f"【數據偏度分析】：\n"
+        f"- T-1月：平均 {m_mean}%, 中位數 {m_med}% (差值: {round(m_mean - m_med, 2)}%)\n"
+        f"- T-1周：平均 {w_mean}%, 中位數 {w_med}% (差值: {round(w_mean - w_med, 2)}%)\n"
+        f"- T+1月：中位數 {f_med}%\n\n"
         f"【分佈摘要】：\n{dist_txt}\n\n"
-        f"請解讀：當『平均值』遠大於『中位數』時，是否代表僅有少數飆股撐場？針對此統計特徵，建議投資人該如何佈局？"
+        f"請解讀：差值代表的『右尾效應』。針對此年度，主力是否在營收爆發前一個月即有『資訊不對稱』的集中操作行為？"
     )
 
-    col_p, col_l = st.columns([2, 1])
-    with col_p:
-        st.code(prompt_text, language="text")
-    
-    with col_l:
+    cp, cl = st.columns([2, 1])
+    with cp: st.code(prompt_text, language="text")
+    with cl:
         encoded_p = urllib.parse.quote(prompt_text)
-        st.link_button("🔥 ChatGPT (網址自動帶入)", f"https://chatgpt.com/?q={encoded_p}")
-        st.link_button("♊ 開啟 Gemini 官網 (強烈推薦貼上明細)", "https://gemini.google.com/app")
-        
-        if st.button("🔒 啟動內建 Gemini 深度診斷"):
-            st.session_state.run_ai_4 = True
+        st.link_button("🔥 ChatGPT (全自動帶入)", f"https://chatgpt.com/?q={encoded_p}")
+        if st.button("🔒 啟動內建 Gemini 專家診斷"):
+            st.session_state.run_ai_42 = True
 
-    if st.session_state.get("run_ai_4", False):
-        with st.form("ai_4"):
-            user_pw = st.text_input("研究員密碼：", type="password")
-            if st.form_submit_button("執行"):
-                if user_pw == st.secrets["AI_ASK_PASSWORD"]:
-                    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                    model = genai.GenerativeModel('gemini-1.5-flash')
-                    with st.spinner("AI 正在比對平均數與中位數..."):
-                        response = model.generate_content(prompt_text)
-                        st.info("### 🤖 內建專家診斷報告")
-                        st.markdown(response.text)
+    if st.session_state.get("run_ai_42", False):
+        with st.form("ai_form_final"):
+            pw = st.text_input("研究員密碼：", type="password")
+            if st.form_submit_button("執行診斷"):
+                if pw == st.secrets["AI_ASK_PASSWORD"]:
+                    if AI_AVAILABLE:
+                        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+                        # 自動尋找可用模型
+                        all_m = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                        target_m = next((m for m in all_m if "gemini-1.5-flash" in m), all_m[0])
+                        model = genai.GenerativeModel(target_m)
+                        with st.spinner("AI 正在解析資訊不對稱痕跡..."):
+                            res = model.generate_content(prompt_text)
+                            st.info("### 🤖 內建專家報告")
+                            st.markdown(res.text)
+                    else: st.error("環境套件缺失")
                 else: st.error("密碼錯誤")
 
 else:
     st.info("💡 查無符合條件之樣本。")
+
+st.markdown("---")
+st.caption("Developed by StockRevenueLab | 數據週期：2019-2025")
