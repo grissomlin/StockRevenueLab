@@ -231,6 +231,11 @@ with st.sidebar:
     show_multi_year = st.checkbox("顯示前後年度比較", value=False)  # 預設關閉，避免查詢錯誤
     show_expected_value = st.checkbox("計算期望值評分", value=True)
 
+# ========== 7. 計算民國年份（全域變數） ==========
+# 在主要程式區域計算民國年份，以便後續查詢使用
+minguo_year = int(target_year) - 1911
+prev_minguo_year = minguo_year - 1
+
 # 獲取主要數據
 df_prob = fetch_prob_data(target_year, study_metric, growth_range[0], growth_range[1])
 
@@ -426,9 +431,6 @@ if not df_prob.empty:
         st.warning("⚠️ 此功能需要查詢多年度數據，可能會影響效能。")
         
         # 獲取詳細股票名單
-        minguo_year = int(target_year) - 1911
-        prev_minguo_year = minguo_year - 1
-        
         list_query = f"""
         WITH hit_table AS (
             SELECT stock_id, COUNT(*) as hits 
@@ -576,7 +578,7 @@ else:
     4. 放寬增長範圍
     """)
 
-# ========== 7. 頁尾資訊 ==========
+# ========== 8. 頁尾資訊 ==========
 st.markdown("---")
 footer_col1, footer_col2, footer_col3 = st.columns(3)
 with footer_col1:
