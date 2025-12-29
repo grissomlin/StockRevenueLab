@@ -4,6 +4,14 @@ import numpy as np
 from sqlalchemy import create_engine, text
 import urllib.parse
 import plotly.graph_objects as go
+import os
+
+# 嘗試匯入 AI 套件
+try:
+    import google.generativeai as genai
+    AI_AVAILABLE = True
+except ImportError:
+    AI_AVAILABLE = False
 
 # ========== 1. 頁面配置 ==========
 st.set_page_config(page_title="公告行為研究室 | StockRevenueLab", layout="wide")
@@ -101,6 +109,14 @@ def fetch_timing_data(year, metric_col, limit, keyword):
     with engine.connect() as conn:
         return pd.read_sql_query(text(query), conn)
 
+# 獲取參數
+with st.sidebar:
+    st.header("🔬 策略參數設定")
+    target_year = st.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)], index=1)
+    study_metric = st.radio("成長指標", ["yoy_pct", "mom_pct"])
+    threshold = st.slider(f"設定 {study_metric} 爆發門檻 %", 30, 300, 100)
+    search_remark = st.text_input("🔍 關鍵字搜尋", "")
+
 df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
 
 if not df.empty:
@@ -132,7 +148,7 @@ if not df.empty:
 
     # D. AI 指令與密碼驗證
     st.divider()
-    st.subheader("🤖 AI 投資行為診斷 (濃縮數據版)")
+    st.subheader("🤖 AI 投資行為診斷")
     
     # 生成濃縮的分佈文字
     dist_txt = (
@@ -143,33 +159,53 @@ if not df.empty:
     )
 
     prompt_text = (
-        f"分析台股 {target_year} 年營收爆發行為。樣本數 {total_n}。\n"
+        f"請擔任專業量化分析師，分析台股 {target_year} 年營收爆發行為。樣本數 {total_n}。\n"
         f"平均報酬：T-1月 {m_avg}%, T-1周 {w_avg}%, T周 {a_avg}%, T+1月 {f_avg}%\n\n"
-        f"【分佈摘要】\n{dist_txt}\n\n"
-        f"請解讀此年度市場資訊先行程度，並給予策略建議。"
+        f"【分佈摘要數據】：\n{dist_txt}\n\n"
+        f"請解讀此年度市場資訊先行程度（大戶佈局或短線預跑），並針對當前的樣本數據給予具體的策略建議。"
     )
 
     col_p, col_l = st.columns([2, 1])
     with col_p:
         st.code(prompt_text, language="text")
-        st.caption("💡 如果自動跳轉失敗，請點擊右上角複製代碼後貼上。")
+        st.caption("💡 如果點擊下方按鈕失敗，請手動複製上方代碼至 AI 平台。")
 
     with col_l:
+        st.write("🚀 **外部 AI 工具**")
         encoded_p = urllib.parse.quote(prompt_text)
-        st.link_button("♊ 開啟 Gemini (穩定推薦)", "https://gemini.google.com/app")
-        st.link_button("🔥 開啟 ChatGPT (全自動嘗試)", f"https://chatgpt.com/?q={encoded_p}")
+        st.link_button("🔥 開啟 ChatGPT (網址帶入)", f"https://chatgpt.com/?q={encoded_p}")
+        st.link_button("♊ 開啟 Gemini 官網", "https://gemini.google.com/app")
         
-        if st.button("🔒 密碼驗證：直接提問"):
+        st.write("---")
+        st.write("🤖 **內建 AI 分析 (免跳轉)**")
+        if st.button("🔒 密碼驗證：直接使用內建 Gemini 分析"):
             st.session_state.check_pw = True
 
+    # 內建 AI 分析對話框與邏輯
     if st.session_state.get("check_pw", False):
-        with st.form("pw"):
-            p = st.text_input("密碼：", type="password")
-            if st.form_submit_button("執行"):
-                if p == st.secrets["AI_ASK_PASSWORD"]:
-                    st.success("通過！")
-                    st.markdown(f'<meta http-equiv="refresh" content="0;url=https://chatgpt.com/?q={encoded_p}">', unsafe_allow_html=True)
-                else: st.error("密碼錯誤")
+        with st.form("pw_gemini"):
+            user_pw = st.text_input("請輸入研究員密碼：", type="password")
+            submitted = st.form_submit_button("啟動內建 Gemini 專家診斷")
+            if submitted:
+                if user_pw == st.secrets["AI_ASK_PASSWORD"]:
+                    if AI_AVAILABLE:
+                        try:
+                            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+                            model = genai.GenerativeModel('gemini-1.5-flash')
+                            with st.spinner("Gemini 正在深入閱卷分析中..."):
+                                response = model.generate_content(prompt_text)
+                                st.info("### 🤖 內建 Gemini 專家診斷報告")
+                                st.markdown(response.text)
+                                st.session_state.check_pw = False # 分析完關閉對話框
+                        except Exception as e:
+                            st.error(f"AI 調用失敗: {e}")
+                    else:
+                        st.error("環境套件 google-generativeai 缺失，請檢查部署設定。")
+                else:
+                    st.error("密碼錯誤，請重新輸入。")
 
 else:
-    st.info("💡 查無樣本。")
+    st.info("💡 查無符合條件之樣本。")
+
+st.markdown("---")
+st.caption("Developed by StockRevenueLab | 數據週期：2019-2025")
