@@ -20,7 +20,7 @@ except ImportError:
     AI_AVAILABLE = False
 
 # ========== 1. 頁面配置 ==========
-st.set_page_config(page_title="公告行為研究室 5.3 | 全維度旗艦版", layout="wide")
+st.set_page_config(page_title="公告行為研究室 5.4 | 全維度旗艦版", layout="wide")
 
 # ========== 2. 安全資料庫連線 ==========
 @st.cache_resource
@@ -59,7 +59,7 @@ def create_big_hist(df, col_name, title, color, desc):
     fig.add_vline(x=med, line_color="blue", line_width=2, annotation_text=f"中位 {med:.2f}%", annotation_position="bottom right")
     fig.update_layout(title=dict(text=title, font=dict(size=20)), height=400, margin=dict(t=80, b=40))
     st.plotly_chart(fig, use_container_width=True)
-    st.info(f"💡 **解讀：** {desc}")
+    st.info(f"💡 **科學解讀：** {desc}")
     st.markdown("---")
 
 # ========== 4. 核心數據抓取 (SQL) ==========
@@ -117,7 +117,7 @@ with st.sidebar:
     threshold = st.slider("爆發門檻 %", 30, 300, 100)
     search_remark = st.text_input("🔍 搜尋備註", "")
 
-st.title(f"🕵️ {target_year} 年 公告行為研究室 5.3")
+st.title(f"🕵️ {target_year} 年 公告行為研究室 5.4")
 
 df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
 
@@ -139,66 +139,74 @@ if not df.empty:
     st.write(f"**📈 統計深探 (T-1月)：** 偏度 `{m_sk:.2f}` | 峰度 `{m_ku:.2f}` | 變異係數 `{m_cv:.2f}`")
     st.write("---")
 
-    # B. 原始明細清單與複製區 (補回按鈕)
-    st.subheader("🏆 原始數據明細")
+    # B. 原始明細與提示詞產生區 (絕不刪除)
+    st.subheader("🏆 原始數據明細與分析指令")
     col_dl, col_copy = st.columns([1, 4])
     with col_dl:
         st.download_button("📋 下載全量 CSV", df.to_csv(index=False).encode('utf-8'), f"data_{target_year}.csv")
+    
     with col_copy:
-        if st.checkbox("🔍 產生 AI 深度診斷提示詞 (包含右尾 225 檔強勢股邏輯)"):
-            tail_df = df[df['pre_month'] > 5]
-            tail_list = tail_df[['stock_id', 'stock_name', 'pre_month', 'remark']].head(100).to_markdown(index=False)
-            rt_prompt = (
-                f"請擔任專業量化分析師，診斷台股 {target_year} 年營收爆發行為。\n"
-                f"【樣本背景】：總數 {total_n} 檔，成長指標 {study_metric} 門檻 {threshold}%。\n"
-                f"【偏態數據】：T-1月平均 {m_mean:.2f}%, 中位數 {m_med:.2f}%, 偏度 {m_sk:.2f}。\n"
-                f"【右尾強勢個股 (漲 > 5%)】：共 {len(tail_df)} 檔，平均漲幅 {tail_df['pre_month'].mean():.2f}%。\n"
-                f"名單摘要如下：\n{tail_list}\n"
-                f"請分析是否存在『主力早知道』的資訊不對稱跡象，並給予策略建議。"
-            )
+        # 重要：重新構建詳細的右尾分析提示詞
+        tail_df = df[df['pre_month'] > 5]
+        tail_list = tail_df[['stock_id', 'stock_name', 'pre_month', 'remark']].head(100).to_markdown(index=False)
+        rt_prompt = (
+            f"請擔任專業量化分析師，診斷台股 {target_year} 年營收爆發行為。\n"
+            f"【研究背景】：總樣本 {total_n} 檔，成長指標 {study_metric} 門檻 {threshold}%。\n"
+            f"【偏態數據】：T-1月平均 {m_mean:.2f}%, 中位數 {m_med:.2f}%, 偏度 {m_sk:.2f}。\n"
+            f"【右尾強勢標的分析】：在公告前一個月漲幅 > 5% 的股票共 {len(tail_df)} 檔，平均漲幅 {tail_df['pre_month'].mean():.2f}%。\n"
+            f"名單摘要如下：\n{tail_list}\n"
+            f"請分析：這群右尾標的是否存在『資訊不對稱』帶來的先行跡象？公告後的慣性如何？請給予操作建議。"
+        )
+        if st.checkbox("🔍 產生 AI 深度診斷提示詞 (右尾個股點名)"):
             st.code(rt_prompt, language="text")
+            st.caption("提示：這段指令包含了前 100 檔強勢股名單與備註，適合餵給 AI 分析產業規律。")
 
     df['連結'] = df['stock_id'].apply(lambda x: f"https://www.wantgoo.com/stock/{x}/technical-chart")
     st.dataframe(df, use_container_width=True, height=400, column_config={"連結": st.column_config.LinkColumn("圖表", display_text="🔗")})
 
-    # C. AI 按鈕區 (補回所有 AI 按鈕)
+    # C. AI 平台按鈕區 (絕不刪除)
     st.write("---")
     st.subheader("🚀 送往 AI 交叉驗證")
-    encoded_p = urllib.parse.quote(rt_prompt if 'rt_prompt' in locals() else "請分析營收爆發行為數據。")
+    encoded_p = urllib.parse.quote(rt_prompt)
     
     btn_c1, btn_c2, btn_c3, btn_c4 = st.columns(4)
-    btn_c1.link_button("🔥 ChatGPT (網址全帶入)", f"https://chatgpt.com/?q={encoded_p}")
+    btn_c1.link_button("🔥 ChatGPT (全自動帶入)", f"https://chatgpt.com/?q={encoded_p}")
     btn_c2.link_button("Ⓜ️ 通義千問 Qwen (需貼上)", "https://tongyi.aliyun.com/")
     btn_c3.link_button("♊ Gemini 官網 (需貼上)", "https://gemini.google.com/app")
     btn_c4.link_button("🌐 Claude.ai (需貼上)", "https://claude.ai/")
 
-    # D. 五張大型報酬分佈圖 (不刪除圖表)
+    # D. 五張分佈圖 (絕不刪除)
     st.write("---")
-    st.subheader("📊 公告前後報酬分佈趨勢 (紅線:平均, 藍線:中位)")
-    create_big_hist(df, "pre_month", "⓪ T-1 月 (大戶佈局區)", "#8a2be2", "公告前一個月。若紅線(平均)遠高於藍線(中位)，代表極端強勢股拉高平均。")
-    create_big_hist(df, "pre_week", "❶ T-1 周 (預跑區)", "#ff4b4b", "公告前一周。用於捕捉短線偷跑跡象。")
+    st.subheader("📊 公告行為分佈趨勢 (紅:平均, 藍:中位)")
+    create_big_hist(df, "pre_month", "⓪ T-1 月 (大戶佈局區)", "#8a2be2", "公告前一個月報酬。紅線在藍線右側代表少數人早知道。")
+    
+    
+    
+    create_big_hist(df, "pre_week", "❶ T-1 周 (預跑區)", "#ff4b4b", "公告前一周報酬。用於捕捉消息走漏後的最後衝刺。")
     create_big_hist(df, "announce_week", "❷ T 周 (公告當周)", "#ffaa00", "營收釋出反應。")
-    create_big_hist(df, "after_week_1", "❸ T+1 周 (慣性區)", "#32cd32", "利多釋出後的追加動能。")
-    create_big_hist(df, "after_month", "❹ 公告後一個月 (結局區)", "#1e90ff", "中位數若低於0，代表大多數股票利多出盡。")
+    create_big_hist(df, "after_week_1", "❸ T+1 周 (慣性區)", "#32cd32", "利多公佈後的買盤延續性。")
+    create_big_hist(df, "after_month", "❹ 公告後一個月 (結局區)", "#1e90ff", "一個月後的波段成果。中位數若為負代表多數人利多出盡賠錢。")
 
-    # E. 內建 AI 診斷 (不刪除內建 AI)
+    # E. 內建 AI 分析 (絕不刪除)
     st.divider()
     if st.button("🔒 啟動內建 Gemini 專家診斷"):
-        st.session_state.run_ai_final = True
+        st.session_state.run_ai_54 = True
 
-    if st.session_state.get("run_ai_final", False):
+    if st.session_state.get("run_ai_54", False):
         with st.form("ai_form"):
             pw = st.text_input("研究員密碼：", type="password")
-            if st.form_submit_button("執行"):
+            if st.form_submit_button("執行分析"):
                 if pw == st.secrets["AI_ASK_PASSWORD"]:
                     if AI_AVAILABLE:
                         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                        model = genai.GenerativeModel('gemini-1.5-flash')
-                        with st.spinner("正在進行全維度偏度分析..."):
+                        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                        target_model = next((m for m in models if "gemini-1.5-flash" in m), models[0])
+                        model = genai.GenerativeModel(target_model)
+                        with st.spinner("AI 正在解析資訊先行程度..."):
                             res = model.generate_content(rt_prompt)
-                            st.info("### 🤖 內建專家診斷報告")
+                            st.info("### 🤖 內建專家報告")
                             st.markdown(res.text)
-                    else: st.error("環境套件缺失")
+                    else: st.error("套件缺失")
                 else: st.error("密碼錯誤")
 
 else:
