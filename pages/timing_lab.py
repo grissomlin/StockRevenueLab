@@ -137,6 +137,7 @@ if not df.empty:
     m_mean, m_med = get_stats('pre_month')
     w_mean, w_med = get_stats('pre_week')
     a_mean, a_med = get_stats('announce_week')
+    aw_mean, aw_med = get_stats('after_week_1')  # <-- 新增 T+1周
     f_mean, f_med = get_stats('after_month')
 
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -154,7 +155,6 @@ if not df.empty:
         st.download_button(label="📋 下載明細 CSV", data=df.to_csv(index=False).encode('utf-8'), file_name=f'stock_{target_year}.csv')
     with col_btn2:
         if st.checkbox("🔍 產生 AI 全量複製指令 (Markdown 表格)"):
-            # 只取關鍵欄位以防字數過多
             copy_data = df[['stock_id', 'stock_name', 'growth_val', 'pre_month', 'pre_week', 'after_month', 'remark']].head(500).to_markdown(index=False)
             st.code(f"請針對以下 2024 年營收爆發股數據進行診斷，分析其 T-1 階段的『右尾(Outliers)』分佈與產業備註，判斷是否有資訊先行跡象：\n\n{copy_data}", language="text")
             st.caption("提示：為確保 AI 讀取，此處僅列出前 500 筆。")
@@ -184,16 +184,34 @@ if not df.empty:
     # D. AI 診斷 (引入偏度診斷)
     st.divider()
     st.subheader("🤖 AI 投資行為深度診斷")
+
+    # ======== 新增：處理 RTC 與 TDIR（若未定義則用 N/A）========
+    # 假設你未來可能定義 rtc, tdir，這裡先安全處理
+    rtc = "N/A"
+    tdir = "N/A"
+    # 如果你有計算方式，例如：
+    # rtc = round((m_mean - m_med) / (df['pre_month'].std() + 1e-6), 2)  # 示例
+    # tdir = ... 
+    # 請在此處插入計算，否則保持 N/A
+
     dist_txt = f"T-1月分佈: {get_ai_summary_dist(df, 'pre_month')}\nT+1月分佈: {get_ai_summary_dist(df, 'after_month')}"
-    prompt_text = (
-        f"分析台股 {target_year} 年營收爆發行為。樣本數 {total_n}。\n"
-        f"【數據偏度分析】：\n"
-        f"- T-1月：平均 {m_mean}%, 中位數 {m_med}% (差值: {round(m_mean - m_med, 2)}%)\n"
-        f"- T-1周：平均 {w_mean}%, 中位數 {w_med}% (差值: {round(w_mean - w_med, 2)}%)\n"
-        f"- T+1月：中位數 {f_med}%\n\n"
-        f"【分佈摘要】：\n{dist_txt}\n\n"
-        f"請解讀：差值代表的『右尾效應』。針對此年度，主力是否在營收爆發前一個月即有『資訊不對稱』的集中操作行為？"
-    )
+
+    # ========== AI Prompt ========== （完全按你要求整合）
+    prompt_text = f"""分析台股 {target_year} 年營收爆發（樣本 {total_n}）。
+T-1月 平均 {m_mean}% / 中位 {m_med}% / RTC {rtc} / TDIR {tdir}
+T-1周 平均 {w_mean}% / 中位 {w_med}%
+T周 平均 {a_mean}% / 中位 {a_med}%
+T+1周 平均 {aw_mean}% / 中位 {aw_med}%
+T+1月 中位 {f_med}%
+
+請判斷：
+1️⃣ 是否存在公告前資訊不對稱的集中布局？
+2️⃣ 右尾是否主導整體報酬？
+3️⃣ 公告後是否具延續性？
+
+【補充分佈摘要】
+{dist_txt}
+"""
 
     cp, cl = st.columns([2, 1])
     with cp: st.code(prompt_text, language="text")
@@ -210,7 +228,6 @@ if not df.empty:
                 if pw == st.secrets["AI_ASK_PASSWORD"]:
                     if AI_AVAILABLE:
                         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                        # 自動尋找可用模型
                         all_m = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                         target_m = next((m for m in all_m if "gemini-1.5-flash" in m), all_m[0])
                         model = genai.GenerativeModel(target_m)
