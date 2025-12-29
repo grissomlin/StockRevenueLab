@@ -735,7 +735,7 @@ footer_col1, footer_col2, footer_col3 = st.columns(3)
 with footer_col1:
     st.markdown("**版本**：公告行為研究室 4.3")
 with footer_col2:
-    st.markdown("**數據週期**：2019-2025")
+    st.markdown("**數據週期**：2020-2025")
 with footer_col3:
     st.markdown("**開發者**：StockRevenueLab")
 
