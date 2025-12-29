@@ -114,7 +114,7 @@ if engine:
                     st.link_button("Ⓜ️ 開啟 Microsoft Copilot (需手動貼上)", f"https://www.bing.com/chat?q={encoded_prompt}")
                     st.link_button("🌐 開啟 Claude.ai (需手動貼上)", "https://claude.ai/")
                     
-                    st.warning("提醒：Copilot 與 ChatGPT 支援自動填入；Claude 建議複製左側代碼。")
+                    st.warning("提醒：ChatGPT 支援自動填入；Copilot 與 Claude 建議複製左側代碼。")
             else:
                 st.warning("⚠️ 目前設定的門檻過高，查無符合的事件樣本，請嘗試調低 YoY 門檻。")
         except Exception as sql_err:
