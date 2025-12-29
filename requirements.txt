@@ -7,3 +7,4 @@ matplotlib
 tabulate
 numpy
 google-generativeai
+scipy
