@@ -62,7 +62,7 @@ def get_engine():
         st.stop()
 
 # ========== 3. 數據抓取引擎 (支援多種統計模式，包含細分下跌區間) ==========
-# ========== 3. 數據抓取引擎 (支援多種統計模式，下跌10%間隔，上漲100%間隔) ==========
+# ========== 3. 數據抓取引擎 (修正月份範圍) ==========
 @st.cache_data(ttl=3600)
 def fetch_heatmap_data(year, metric_col, stat_method):
     engine = get_engine()
@@ -106,7 +106,7 @@ def fetch_heatmap_data(year, metric_col, stat_method):
         agg_func = f"AVG(m.{metric_col})"
         stat_label = "平均值"
     
-    # 修改這裡：下跌10%間隔，上漲100%間隔
+    # 修改這裡：正確抓取「去年12月到當年11月」共12個月的數據
     query = f"""
     WITH annual_bins AS (
         SELECT 
@@ -167,10 +167,14 @@ def fetch_heatmap_data(year, metric_col, stat_method):
         WHERE year = '{year}'
     ),
     monthly_stats AS (
+        -- 修正這裡：只抓取「去年12月到當年11月」共12個月的數據
+        -- 排除當年12月，因為12月看到的是11月數據
         SELECT stock_id, report_month, {metric_col} 
         FROM monthly_revenue
-        WHERE report_month = '{prev_minguo_year}_12'
-           OR (report_month LIKE '{minguo_year}_%' AND LENGTH(report_month) <= 7)
+        WHERE report_month = '{prev_minguo_year}_12'  -- 去年12月
+           OR (report_month LIKE '{minguo_year}_%' 
+               AND report_month < '{minguo_year}_12'  -- 當年1-11月，排除12月
+               AND LENGTH(report_month) <= 7)
     )
     SELECT 
         b.return_bin,
@@ -179,7 +183,7 @@ def fetch_heatmap_data(year, metric_col, stat_method):
         {agg_func} as val,
         COUNT(DISTINCT b.symbol) as stock_count,
         COUNT(m.{metric_col}) as data_points,
-        AVG(b.annual_return) as avg_annual_return  -- 新增：計算該區間的平均股價漲幅
+        AVG(b.annual_return) as avg_annual_return
     FROM annual_bins b
     JOIN monthly_stats m ON SPLIT_PART(b.symbol, '.', 1) = m.stock_id
     WHERE m.{metric_col} IS NOT NULL
@@ -195,7 +199,7 @@ def fetch_heatmap_data(year, metric_col, stat_method):
         df = df.sort_values(['bin_order', 'report_month'])
         return df
 
-# ========== 4. 統計摘要數據抓取 (修改版，下跌10%間隔，上漲100%間隔) ==========
+# ========== 4. 統計摘要數據抓取 (修正月份範圍) ==========
 @st.cache_data(ttl=3600)
 def fetch_stat_summary(year, metric_col):
     engine = get_engine()
@@ -262,16 +266,19 @@ def fetch_stat_summary(year, metric_col):
         WHERE year = '{year}'
     ),
     monthly_stats AS (
+        -- 修正這裡：只抓取「去年12月到當年11月」共12個月的數據
         SELECT stock_id, report_month, {metric_col} 
         FROM monthly_revenue
-        WHERE report_month = '{prev_minguo_year}_12'
-           OR (report_month LIKE '{minguo_year}_%' AND LENGTH(report_month) <= 7)
+        WHERE report_month = '{prev_minguo_year}_12'  -- 去年12月
+           OR (report_month LIKE '{minguo_year}_%' 
+               AND report_month < '{minguo_year}_12'  -- 當年1-11月，排除12月
+               AND LENGTH(report_month) <= 7)
     )
     SELECT 
         b.return_bin,
         b.bin_order,
         COUNT(DISTINCT b.symbol) as stock_count,
-        AVG(b.annual_return) as avg_annual_return,  -- 該區間的平均股價漲幅
+        AVG(b.annual_return) as avg_annual_return,
         ROUND(AVG(m.{metric_col})::numeric, 2) as mean_val,
         ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY m.{metric_col})::numeric, 2) as median_val,
         ROUND(STDDEV(m.{metric_col})::numeric, 2) as std_val,
@@ -290,6 +297,71 @@ def fetch_stat_summary(year, metric_col):
     
     with engine.connect() as conn:
         return pd.read_sql_query(text(query), conn)
+
+# ========== 在深度挖掘查詢中也需要同樣修正 ==========
+# 在深度挖掘部分（第12部分）的SQL查詢中，也需要修正月份範圍
+# 找到 detail_query 並修改 month_stats 部分
+
+# 修改前（大約在程式碼第320行附近）：
+# WHERE (m.report_month LIKE '{minguo_year}_%' OR m.report_month = '{prev_minguo_year}_12')
+
+# 修改後：
+detail_query = f"""
+WITH target_stocks AS (
+    SELECT symbol, ((year_close - year_open) / year_open) * 100 as annual_ret 
+    FROM stock_annual_k 
+    WHERE year = '{target_year}' AND (CASE 
+            WHEN ((year_close - year_open) / year_open) * 100 <= -100 THEN '00. 下跌-100%以下'
+            WHEN ((year_close - year_open) / year_open) * 100 < -90 THEN '01. 下跌-100%至-90%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN '02. 下跌-90%至-80%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -70 THEN '03. 下跌-80%至-70%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN '04. 下跌-70%至-60%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -50 THEN '05. 下跌-60%至-50%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN '06. 下跌-50%至-40%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -30 THEN '07. 下跌-40%至-30%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN '08. 下跌-30%至-20%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -10 THEN '09. 下跌-20%至-10%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN '10. 下跌-10%至0%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 100 THEN '11. 上漲0-100%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 200 THEN '12. 上漲100-200%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 300 THEN '13. 上漲200-300%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 400 THEN '14. 上漲300-400%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 500 THEN '15. 上漲400-500%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 600 THEN '16. 上漲500-600%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 700 THEN '17. 上漲600-700%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 800 THEN '18. 上漲700-800%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 900 THEN '19. 上漲800-900%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 1000 THEN '20. 上漲900-1000%'
+            ELSE '21. 上漲1000%以上'
+        END) = '{selected_bin}'
+),
+latest_remarks AS (
+    -- 取得該年度最後一個有備註的月份資料（只到11月）
+    SELECT DISTINCT ON (stock_id) stock_id, remark 
+    FROM monthly_revenue 
+    WHERE (report_month LIKE '{minguo_year}_%' AND report_month < '{minguo_year}_12' OR report_month = '{prev_minguo_year}_12')
+      AND remark IS NOT NULL AND remark <> '-' AND remark <> ''
+    ORDER BY stock_id, report_month DESC
+)
+SELECT 
+    m.stock_id as "代號", 
+    m.stock_name as "名稱",
+    ROUND(t.annual_ret::numeric, 1) as "年度實際漲幅%",
+    ROUND(AVG(m.yoy_pct)::numeric, 1) as "年增平均%", 
+    ROUND(AVG(m.mom_pct)::numeric, 1) as "月增平均%",
+    ROUND(STDDEV(m.yoy_pct)::numeric, 1) as "年增波動%",
+    ROUND(STDDEV(m.mom_pct)::numeric, 1) as "月增波動%",
+    r.remark as "最新營收備註"
+FROM monthly_revenue m
+JOIN target_stocks t ON m.stock_id = SPLIT_PART(t.symbol, '.', 1)
+LEFT JOIN latest_remarks r ON m.stock_id = r.stock_id
+-- 只抓取「去年12月到當年11月」共12個月的數據
+WHERE (m.report_month LIKE '{minguo_year}_%' AND m.report_month < '{minguo_year}_12' OR m.report_month = '{prev_minguo_year}_12')
+  AND (m.stock_name LIKE '%{search_keyword}%' OR m.remark LIKE '%{search_keyword}%')
+GROUP BY m.stock_id, m.stock_name, t.annual_ret, r.remark
+ORDER BY "年度實際漲幅%" DESC 
+LIMIT {display_limit};
+"""
 
 # ========== 5. AI分析提示詞生成 (修改版，反映新的分組間隔) ==========
 def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pivot_df, total_samples):
