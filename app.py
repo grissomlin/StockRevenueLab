@@ -62,6 +62,7 @@ def get_engine():
         st.stop()
 
 # ========== 3. 數據抓取引擎 (支援多種統計模式，包含細分下跌區間) ==========
+# ========== 3. 數據抓取引擎 (支援多種統計模式，下跌10%間隔，上漲100%間隔) ==========
 @st.cache_data(ttl=3600)
 def fetch_heatmap_data(year, metric_col, stat_method):
     engine = get_engine()
@@ -105,34 +106,62 @@ def fetch_heatmap_data(year, metric_col, stat_method):
         agg_func = f"AVG(m.{metric_col})"
         stat_label = "平均值"
     
-    # 修改這裡：將下跌區間細分
+    # 修改這裡：下跌10%間隔，上漲100%間隔
     query = f"""
     WITH annual_bins AS (
         SELECT 
             symbol,
             ((year_close - year_open) / year_open) * 100 AS annual_return,
             CASE 
-                -- 將下跌區間細分
-                WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN '00. 下跌-80%以下'
-                WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN '01. 下跌-60%至-80%'
-                WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN '02. 下跌-40%至-60%'
-                WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN '03. 下跌-20%至-40%'
-                WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN '04. 下跌0%至-20%'
-                -- 保持原來的正漲幅區間
-                WHEN ((year_close - year_open) / year_open) * 100 >= 1000 THEN '11. 漲幅1000%+'
-                ELSE LPAD(FLOOR(((year_close - year_open) / year_open) * 100)::text, 2, '0') || '. ' || 
-                     (FLOOR(((year_close - year_open) / year_open) * 100))::text || '-' || 
-                     (FLOOR(((year_close - year_open) / year_open) * 100) + 100)::text || '%'
+                -- 下跌區間：每10%一個間隔（從-100%到0%）
+                WHEN ((year_close - year_open) / year_open) * 100 <= -100 THEN '00. 下跌-100%以下'
+                WHEN ((year_close - year_open) / year_open) * 100 < -90 THEN '01. 下跌-100%至-90%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN '02. 下跌-90%至-80%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -70 THEN '03. 下跌-80%至-70%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN '04. 下跌-70%至-60%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -50 THEN '05. 下跌-60%至-50%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN '06. 下跌-50%至-40%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -30 THEN '07. 下跌-40%至-30%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN '08. 下跌-30%至-20%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -10 THEN '09. 下跌-20%至-10%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN '10. 下跌-10%至0%'
+                -- 上漲區間：每100%一個間隔
+                WHEN ((year_close - year_open) / year_open) * 100 < 100 THEN '11. 上漲0-100%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 200 THEN '12. 上漲100-200%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 300 THEN '13. 上漲200-300%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 400 THEN '14. 上漲300-400%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 500 THEN '15. 上漲400-500%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 600 THEN '16. 上漲500-600%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 700 THEN '17. 上漲600-700%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 800 THEN '18. 上漲700-800%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 900 THEN '19. 上漲800-900%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 1000 THEN '20. 上漲900-1000%'
+                ELSE '21. 上漲1000%以上'
             END AS return_bin,
             -- 為了分組排序，新增一個順序欄位
             CASE 
-                WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN 0
-                WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN 1
-                WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN 2
-                WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN 3
-                WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN 4
-                WHEN ((year_close - year_open) / year_open) * 100 >= 1000 THEN 20
-                ELSE FLOOR(((year_close - year_open) / year_open) * 100) / 100 + 5
+                WHEN ((year_close - year_open) / year_open) * 100 <= -100 THEN 0
+                WHEN ((year_close - year_open) / year_open) * 100 < -90 THEN 1
+                WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN 2
+                WHEN ((year_close - year_open) / year_open) * 100 < -70 THEN 3
+                WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN 4
+                WHEN ((year_close - year_open) / year_open) * 100 < -50 THEN 5
+                WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN 6
+                WHEN ((year_close - year_open) / year_open) * 100 < -30 THEN 7
+                WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN 8
+                WHEN ((year_close - year_open) / year_open) * 100 < -10 THEN 9
+                WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN 10
+                WHEN ((year_close - year_open) / year_open) * 100 < 100 THEN 11
+                WHEN ((year_close - year_open) / year_open) * 100 < 200 THEN 12
+                WHEN ((year_close - year_open) / year_open) * 100 < 300 THEN 13
+                WHEN ((year_close - year_open) / year_open) * 100 < 400 THEN 14
+                WHEN ((year_close - year_open) / year_open) * 100 < 500 THEN 15
+                WHEN ((year_close - year_open) / year_open) * 100 < 600 THEN 16
+                WHEN ((year_close - year_open) / year_open) * 100 < 700 THEN 17
+                WHEN ((year_close - year_open) / year_open) * 100 < 800 THEN 18
+                WHEN ((year_close - year_open) / year_open) * 100 < 900 THEN 19
+                WHEN ((year_close - year_open) / year_open) * 100 < 1000 THEN 20
+                ELSE 21
             END AS bin_order
         FROM stock_annual_k
         WHERE year = '{year}'
@@ -166,7 +195,7 @@ def fetch_heatmap_data(year, metric_col, stat_method):
         df = df.sort_values(['bin_order', 'report_month'])
         return df
 
-# ========== 4. 統計摘要數據抓取 (修改版，包含細分下跌區間) ==========
+# ========== 4. 統計摘要數據抓取 (修改版，下跌10%間隔，上漲100%間隔) ==========
 @st.cache_data(ttl=3600)
 def fetch_stat_summary(year, metric_col):
     engine = get_engine()
@@ -179,27 +208,55 @@ def fetch_stat_summary(year, metric_col):
             symbol,
             ((year_close - year_open) / year_open) * 100 AS annual_return,
             CASE 
-                -- 將下跌區間細分
-                WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN '00. 下跌-80%以下'
-                WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN '01. 下跌-60%至-80%'
-                WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN '02. 下跌-40%至-60%'
-                WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN '03. 下跌-20%至-40%'
-                WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN '04. 下跌0%至-20%'
-                -- 保持原來的正漲幅區間
-                WHEN ((year_close - year_open) / year_open) * 100 >= 1000 THEN '11. 漲幅1000%+'
-                ELSE LPAD(FLOOR(((year_close - year_open) / year_open) * 100)::text, 2, '0') || '. ' || 
-                     (FLOOR(((year_close - year_open) / year_open) * 100))::text || '-' || 
-                     (FLOOR(((year_close - year_open) / year_open) * 100) + 100)::text || '%'
+                -- 下跌區間：每10%一個間隔（從-100%到0%）
+                WHEN ((year_close - year_open) / year_open) * 100 <= -100 THEN '00. 下跌-100%以下'
+                WHEN ((year_close - year_open) / year_open) * 100 < -90 THEN '01. 下跌-100%至-90%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN '02. 下跌-90%至-80%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -70 THEN '03. 下跌-80%至-70%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN '04. 下跌-70%至-60%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -50 THEN '05. 下跌-60%至-50%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN '06. 下跌-50%至-40%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -30 THEN '07. 下跌-40%至-30%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN '08. 下跌-30%至-20%'
+                WHEN ((year_close - year_open) / year_open) * 100 < -10 THEN '09. 下跌-20%至-10%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN '10. 下跌-10%至0%'
+                -- 上漲區間：每100%一個間隔
+                WHEN ((year_close - year_open) / year_open) * 100 < 100 THEN '11. 上漲0-100%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 200 THEN '12. 上漲100-200%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 300 THEN '13. 上漲200-300%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 400 THEN '14. 上漲300-400%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 500 THEN '15. 上漲400-500%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 600 THEN '16. 上漲500-600%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 700 THEN '17. 上漲600-700%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 800 THEN '18. 上漲700-800%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 900 THEN '19. 上漲800-900%'
+                WHEN ((year_close - year_open) / year_open) * 100 < 1000 THEN '20. 上漲900-1000%'
+                ELSE '21. 上漲1000%以上'
             END AS return_bin,
             -- 為了分組排序，新增一個順序欄位
             CASE 
-                WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN 0
-                WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN 1
-                WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN 2
-                WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN 3
-                WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN 4
-                WHEN ((year_close - year_open) / year_open) * 100 >= 1000 THEN 20
-                ELSE FLOOR(((year_close - year_open) / year_open) * 100) / 100 + 5
+                WHEN ((year_close - year_open) / year_open) * 100 <= -100 THEN 0
+                WHEN ((year_close - year_open) / year_open) * 100 < -90 THEN 1
+                WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN 2
+                WHEN ((year_close - year_open) / year_open) * 100 < -70 THEN 3
+                WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN 4
+                WHEN ((year_close - year_open) / year_open) * 100 < -50 THEN 5
+                WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN 6
+                WHEN ((year_close - year_open) / year_open) * 100 < -30 THEN 7
+                WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN 8
+                WHEN ((year_close - year_open) / year_open) * 100 < -10 THEN 9
+                WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN 10
+                WHEN ((year_close - year_open) / year_open) * 100 < 100 THEN 11
+                WHEN ((year_close - year_open) / year_open) * 100 < 200 THEN 12
+                WHEN ((year_close - year_open) / year_open) * 100 < 300 THEN 13
+                WHEN ((year_close - year_open) / year_open) * 100 < 400 THEN 14
+                WHEN ((year_close - year_open) / year_open) * 100 < 500 THEN 15
+                WHEN ((year_close - year_open) / year_open) * 100 < 600 THEN 16
+                WHEN ((year_close - year_open) / year_open) * 100 < 700 THEN 17
+                WHEN ((year_close - year_open) / year_open) * 100 < 800 THEN 18
+                WHEN ((year_close - year_open) / year_open) * 100 < 900 THEN 19
+                WHEN ((year_close - year_open) / year_open) * 100 < 1000 THEN 20
+                ELSE 21
             END AS bin_order
         FROM stock_annual_k
         WHERE year = '{year}'
@@ -214,7 +271,7 @@ def fetch_stat_summary(year, metric_col):
         b.return_bin,
         b.bin_order,
         COUNT(DISTINCT b.symbol) as stock_count,
-        AVG(b.annual_return) as avg_annual_return,  -- 新增：該區間的平均股價漲幅
+        AVG(b.annual_return) as avg_annual_return,  -- 該區間的平均股價漲幅
         ROUND(AVG(m.{metric_col})::numeric, 2) as mean_val,
         ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY m.{metric_col})::numeric, 2) as median_val,
         ROUND(STDDEV(m.{metric_col})::numeric, 2) as std_val,
@@ -234,7 +291,7 @@ def fetch_stat_summary(year, metric_col):
     with engine.connect() as conn:
         return pd.read_sql_query(text(query), conn)
 
-# ========== 5. AI分析提示詞生成 (修改版，包含細分下跌區間) ==========
+# ========== 5. AI分析提示詞生成 (修改版，反映新的分組間隔) ==========
 def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pivot_df, total_samples):
     current_date = datetime.now().strftime("%Y-%m-%d")
     
@@ -251,7 +308,7 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
         worst_pos_rate = 0
     
     # 找出最好的上漲區間
-    best_bins = stat_summary[~stat_summary['return_bin'].str.contains('下跌')].copy()
+    best_bins = stat_summary[stat_summary['return_bin'].str.contains('上漲')].copy()
     if not best_bins.empty:
         best_bin = best_bins.loc[best_bins['avg_annual_return'].idxmax()]
         best_bin_name = best_bin['return_bin']
@@ -262,7 +319,7 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
         best_avg_return = 0
         best_pos_rate = 0
     
-    # 簡化統計摘要表格
+    # 簡化統計摘要表格（顯示前5個下跌和所有上漲）
     summary_table = ""
     for _, row in stat_summary.iterrows():
         bin_name = row['return_bin']
@@ -272,22 +329,30 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
         else:
             simple_name = bin_name.split(' ')[1] if len(bin_name.split(' ')) > 1 else bin_name
         
-        summary_table += f"| {simple_name} | {row['stock_count']}檔 | {row['avg_annual_return']:.1f}% | {row['mean_val']:.1f}% | {row['median_val']:.1f}% | {row['positive_rate']:.1f}% |\n"
+        summary_table += f"| {simple_name} | {row['stock_count']}檔 | {row['avg_annual_return']:.1f}% | {row['mean_val']:.1f}% | {row['positive_rate']:.1f}% |\n"
     
-    prompt = f"""# 台股營收與股價關聯分析報告 (細分下跌區間版)
+    # 計算一些關鍵統計
+    total_falling_stocks = stat_summary[stat_summary['return_bin'].str.contains('下跌')]['stock_count'].sum()
+    total_rising_stocks = stat_summary[stat_summary['return_bin'].str.contains('上漲')]['stock_count'].sum()
+    falling_ratio = total_falling_stocks / total_samples * 100
+    rising_ratio = total_rising_stocks / total_samples * 100
+    
+    prompt = f"""# 台股營收與股價關聯分析報告
 分析時間: {current_date}
 分析年度: {target_year}年
 成長指標: {metric_choice}
 統計方法: {stat_method}
 總樣本數: {total_samples:,}檔
+下跌股票比例: {falling_ratio:.1f}% ({total_falling_stocks:,}檔)
+上漲股票比例: {rising_ratio:.1f}% ({total_rising_stocks:,}檔)
 
 ## 🎯 重要數據說明
-**這是「按股價漲幅分組看營收表現」，且下跌區間已細分為5個等級！**
+**這是「按股價漲幅分組看營收表現」，分組間隔為：下跌每10%，上漲每100%**
 
 ### 數據結構說明：
 1. **分組依據**：先按照股票「年度實際漲幅」分成不同區間
-   - 下跌股票細分為：-80%以下、-60%至-80%、-40%至-60%、-20%至-40%、0%至-20%
-   - 上漲股票保持原有分組：0-100%、100-200%、...、1000%+
+   - 下跌股票：每10%一個間隔（共11個區間，從-100%以下到-10%~0%）
+   - 上漲股票：每100%一個間隔（共11個區間，從0-100%到1000%以上）
 
 2. **觀察指標**：在每個股價漲幅區間內，計算該區間股票的營收表現
 
@@ -296,68 +361,56 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
 2. **最好的上漲區間**: {best_bin_name} (平均股價漲幅{best_avg_return:.1f}%，營收正增長比例{best_pos_rate:.1f}%)
 
 ## 數據摘要表
-| 股價漲幅區間 | 股票數量 | 平均股價漲幅 | 營收平均成長 | 營收中位數成長 | 正增長比例 |
-|--------------|----------|--------------|--------------|----------------|------------|
+| 股價漲幅區間 | 股票數量 | 平均股價漲幅 | 營收平均成長 | 正增長比例 |
+|--------------|----------|--------------|--------------|------------|
 {summary_table}
 
 ## 🎯 分析任務（請特別關注下跌區間的細分分析）
 請擔任專業量化分析師，根據以上細分數據回答：
 
-### 1. 下跌股票的深度分析
-- **不同跌幅等級**的股票，營收表現有何差異？
-  - 跌80%以上的股票 vs 跌20%以內的股票，營收表現差多少？
-- **極度弱勢股**（跌60%以上）的營收特徵是什麼？有沒有「跌越多，營收越差」的趨勢？
-- **輕微下跌股**（跌20%以內）的營收表現如何？是不是「營收還不錯，但股價小跌」？
+### 1. 下跌股票的梯度分析（每10%一個等級）
+- **跌幅深度與營收表現的關係**：越深的跌幅，營收表現是否越差？
+- **關鍵轉折點**：哪個跌幅區間開始，營收表現出現明顯惡化？
+- **輕微下跌股**（跌10%以內）vs **重度下跌股**（跌50%以上）：營收表現差異有多大？
 
-### 2. 股價漲幅 vs 營收表現的完整圖譜
-- 從「極度弱勢」到「超級強勢」，營收表現呈現什麼樣的變化曲線？
-- 有沒有**轉折點**？例如：某個漲幅區間開始，營收表現明顯改善？
-- **異常現象**：有沒有「股價跌很深但營收不錯」或「股價大漲但營收普通」的區間？
+### 2. 上漲股票的層級分析（每100%一個等級）
+- **漲幅高度與營收表現的關係**：漲得越高的股票，營收表現是否越好？
+- **甜蜜點分析**：哪個漲幅區間的營收表現最突出？是100-200%還是200-300%？
+- **極端上漲股**（漲500%以上）：營收表現有何特徵？是持續高成長還是波動大？
 
-### 3. 投資策略啟示
-- **抄底策略**：根據數據，哪種跌幅的股票最有「抄底價值」？
-- **風險控管**：哪些下跌等級的股票應該絕對避免？
+### 3. 對比分析：下跌vs上漲
+- **營收正增長比例**：上漲股票 vs 下跌股票，差距有多大？
+- **營收波動率**：哪個區間的營收波動最大？是最弱的下跌股還是最強的上漲股？
+- **異常值分析**：有沒有「股價跌但營收好」或「股價漲但營收差」的明顯案例？
+
+### 4. 投資策略啟示
+- **抄底策略**：根據10%間隔數據，哪個跌幅區間最適合抄底？
 - **強勢股篩選**：要找到潛在飆股，應該關注哪些營收特徵？
-
-### 4. 統計深度分析
-- 各區間的**營收波動率**（標準差）有什麼規律？
-- **正增長比例**的變化：股價表現越好的區間，營收正增長比例是否越高？
-- **極端值分析**：最賺錢和最賠錢的區間，營收分佈有什麼特徵？
+- **風險控管**：哪些跌幅區間應該絕對避免？有沒有「越跌越危險」的趨勢？
 
 ## 📊 分析框架建議
 請按照以下順序分析：
-1. **下跌階梯分析**：從最深跌幅到最淺跌幅，逐一分析營收表現
-2. **整體趨勢分析**：繪製「股價漲幅 vs 營收表現」的完整曲線
-3. **關鍵轉折點**：找出營收表現發生質變的股價區間
-4. **投資應用**：基於細分數據提出更精準的投資策略
+1. **下跌梯度分析**：從-100%到0%，分析每10%間隔的營收表現變化
+2. **上漲層級分析**：從0%到1000%以上，分析每100%間隔的營收表現變化
+3. **對比分析**：比較下跌和上漲股票的營收特徵差異
+4. **投資應用**：提出基於梯度數據的具體投資策略
 
 ## ⚠️ 重要提醒
-1. **下跌已細分**：現在有5個下跌等級，請分別分析
-2. **樣本數注意**：有些下跌區間可能股票很少，分析時請注意統計顯著性
-3. **避免倖存者偏差**：極度弱勢股可能已下市，這是倖存者樣本
-4. **時間滯後性**：{target_year}年1月看到的是前一年12月營收
+1. **間隔差異**：下跌10%間隔 vs 上漲100%間隔，反映市場特性（下跌更敏感）
+2. **樣本數注意**：極端區間（如-100%以下或1000%以上）可能股票很少
+3. **時間滯後性**：{target_year}年1月看到的是前一年12月營收
+4. **統計顯著性**：小樣本區間的結論需謹慎
 
 ## 📝 回答要求
 1. 用中文回答，結構清晰
-2. 特別關注**下跌區間的細分比較**
+2. 特別關注**下跌10%間隔的細緻變化**
 3. 每個觀點都要有具體的數據支持
-4. 提供實際可行的分級投資建議
+4. 提供基於梯度分析的具體投資建議
 
 現在，請開始您的專業分析：
 """
     
     return prompt
-
-# ========== 在深度挖掘部分也需要修改選擇框 ==========
-# 在深度挖掘區間選擇部分，修改選擇框的選項生成方式
-# 這是修改第12部分（深度挖掘）中的selected_bin選擇框
-
-# 修改前（大約在程式碼第320行附近）：
-# selected_bin = st.selectbox("🎯 選擇漲幅區間：", pivot_df.index[::-1])
-
-# 修改後：
-# 我們需要確保pivot_df的index按照正確的順序排列
-# 在熱力圖部分修改pivot_df的生成：
 
 # ========== 6. 側邊欄 UI ==========
 st.sidebar.header("🔬 研究條件篩選")
