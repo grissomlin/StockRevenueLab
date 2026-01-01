@@ -7,6 +7,19 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import time
+# ========== 2. 安全資料庫連線 ==========
+@st.cache_resource
+def get_engine():
+    try:
+        DB_PASSWORD = st.secrets["DB_PASSWORD"]
+        PROJECT_REF = st.secrets["PROJECT_REF"]
+        POOLER_HOST = st.secrets["POOLER_HOST"]
+        encoded_password = urllib.parse.quote_plus(DB_PASSWORD)
+        connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
+        return create_engine(connection_string)
+    except Exception as e:
+        st.error("❌ 資料庫連線失敗，請檢查 Streamlit Secrets 設定。")
+        st.stop()
 @st.cache_data(ttl=3600)
 def get_latest_data_date():
     try:
@@ -55,19 +68,7 @@ st.sidebar.markdown(f"""
 st.title("🧪 StockRevenueLab: 全時段飆股基因對帳單")
 st.markdown("#### 透過 16 萬筆真實數據，揭開業績與股價漲幅的神秘面紗")
 
-# ========== 2. 安全資料庫連線 ==========
-@st.cache_resource
-def get_engine():
-    try:
-        DB_PASSWORD = st.secrets["DB_PASSWORD"]
-        PROJECT_REF = st.secrets["PROJECT_REF"]
-        POOLER_HOST = st.secrets["POOLER_HOST"]
-        encoded_password = urllib.parse.quote_plus(DB_PASSWORD)
-        connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
-        return create_engine(connection_string)
-    except Exception as e:
-        st.error("❌ 資料庫連線失敗，請檢查 Streamlit Secrets 設定。")
-        st.stop()
+
 
 # ========== 🚀 核心變數定義區 (必須放在 fetch 數據之前) ==========
 st.sidebar.header("🔬 研究條件篩選")
