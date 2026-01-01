@@ -448,6 +448,11 @@ stat_method = st.sidebar.selectbox("統計指標模式", stat_methods, index=0,
 target_col = "yoy_pct" if metric_choice == "年增率 (YoY)" else "mom_pct"
 
 # ========== 7. 儀表板主視圖 ==========
+# 初始化變數，避免頁尾報錯
+total_samples = 0
+actual_months = 0
+total_data_points = 0
+
 df = fetch_heatmap_data(target_year, target_col, stat_method)
 stat_summary = fetch_stat_summary(target_year, target_col)
 
