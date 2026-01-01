@@ -552,8 +552,7 @@ if not df.empty:
                 use_container_width=True,
                 height=400
             )
-            
-            # ========== 11. AI分析提示詞區塊 ==========
+
             # ========== 11. AI分析提示詞區塊 ==========
             st.markdown("---")
             st.subheader("🤖 AI 智能分析助手")
