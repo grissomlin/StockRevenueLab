@@ -25,12 +25,16 @@ def get_latest_data_date():
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            # 抓取營收表中最晚的月份
-            query = text("SELECT MAX(report_month) FROM monthly_revenue")
+            # 抓取股價表中最晚的日期
+            query = text("SELECT MAX(date) FROM stock_prices")
             result = conn.execute(query).scalar()
-            return result
-    except:
-        return "未知"
+            
+            # 如果 result 是 datetime 物件，轉為字串格式 (YYYY-MM-DD)
+            if hasattr(result, 'strftime'):
+                return result.strftime('%Y-%m-%d')
+            return str(result)
+    except Exception as e:
+        return "資料擷取中"
 # ========== 1. 頁面配置 ==========
 st.set_page_config(
     page_title="StockRevenueLab | 趨勢觀測站",
