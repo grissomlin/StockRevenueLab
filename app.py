@@ -610,7 +610,7 @@ if not df.empty:
                 encoded_p = urllib.parse.quote(prompt_text)
                 st.link_button(
                     "🔥 開啟 ChatGPT 分析", 
-                    f"https://chatgpt.com/?q={encoded_p}",
+                    f"https://chatgpt.com/",
                     help="在新分頁開啟 ChatGPT 並自動帶入分析指令",
                     type="primary"
                 )
