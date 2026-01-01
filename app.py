@@ -708,7 +708,7 @@ if not df.empty:
       AND (m.report_month LIKE '{minguo_year}_%' AND m.report_month < '{minguo_year}_12' OR m.report_month = '{prev_minguo_year}_12')
       AND (m.stock_name LIKE '%{search_keyword}%' OR (r.remark IS NOT NULL AND r.remark LIKE '%{search_keyword}%'))
     GROUP BY m.stock_id, m.stock_name, t.annual_ret, r.remark
-    ORDER BY "年度實際漲幅%" DESC 
+    ORDER BY "年度股價實際漲幅%" DESC 
     LIMIT {display_limit};
     """
     
