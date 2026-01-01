@@ -604,9 +604,10 @@ if not df.empty:
                 mime="text/csv"
             )
 
+else:
+    st.warning(f"⚠️ 找不到 {target_year} 年的數據。請確認資料庫中已匯入該年度股價與營收。")
 
-
-# ========== 15. 頁尾 ==========
+# ========== 14. 頁尾 (修正後) ==========
 st.markdown("---")
 
 # 獲取當前日期
@@ -625,8 +626,8 @@ with col1:
     """, unsafe_allow_html=True)
 
 with col2:
-    # 計算實際數據完整性
-    if total_samples > 0:
+    # 只在有數據的情況下計算完整性
+    if 'total_samples' in locals() and total_samples > 0 and 'actual_months' in locals() and 'total_data_points' in locals():
         completeness = (total_data_points / (total_samples * actual_months)) * 100
     else:
         completeness = 0
@@ -635,7 +636,9 @@ with col2:
     <div style="text-align: center;">
         <div style="font-size: 12px; color: #666;">數據完整性</div>
         <div style="font-size: 24px; font-weight: bold; color: #4CAF50;">{completeness:.1f}%</div>
-        <div style="font-size: 10px; color: #999;">{int(total_data_points):,} / {int(total_samples * actual_months):,}</div>
+        <div style="font-size: 10px; color: #999;">
+            {f"{int(total_data_points):,} / {int(total_samples * actual_months):,}" if 'total_samples' in locals() and total_samples > 0 else "無數據"}
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
