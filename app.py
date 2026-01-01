@@ -509,7 +509,15 @@ if not df.empty:
     st.info(f"**當前統計模式：{stat_method}** | 顏色深淺代表統計值的大小")
     
     pivot_df = df.pivot(index='return_bin', columns='report_month', values='val')
+    # 加入這段美化月份顯示
+    def rename_month(m):
+        parts = m.split('_')
+        month = parts[1]
+        if int(parts[0]) < (int(target_year) - 1911):
+            return f"去年{month}月"
+        return f"{month}月"
     
+    pivot_df.columns = [rename_month(c) for c in pivot_df.columns]
     # 根據統計方法選擇顏色方案
     if "標準差" in stat_method or "變異係數" in stat_method or "四分位距" in stat_method:
         color_scale = "Blues"  # 波動性用藍色
