@@ -603,42 +603,15 @@ if not df.empty:
                 file_name=f"stock_heatmap_{target_year}_{metric_choice}_{quick_stat}.csv",
                 mime="text/csv"
             )
-    
-    # ========== 14. 用戶反饋區 ==========
-    st.markdown("---")
-    with st.expander("💬 給開發者的建議與反饋", expanded=False):
-        st.markdown("""
-        **我們想知道您的想法！**
-        
-        這個工具對您的投資分析有幫助嗎？您希望新增哪些功能？
-        """)
-        
-        feedback_type = st.selectbox(
-            "反饋類型",
-            ["功能建議", "數據問題", "界面改進", "BUG回報", "其他"]
-        )
-        
-        feedback_text = st.text_area("請詳細描述您的建議或問題：", height=150)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📤 提交反饋", type="primary"):
-                if feedback_text:
-                    st.success("感謝您的寶貴意見！我們會認真考慮您的建議。")
-                    # 這裡可以添加將反饋保存到資料庫的程式碼
-                else:
-                    st.warning("請輸入您的反饋內容")
-        
-        with col2:
-            if st.button("⭐ 給個好評"):
-                st.balloons()
-                st.success("感謝您的支持！這對我們非常重要！")
 
-else:
-    st.warning(f"⚠️ 找不到 {target_year} 年的數據。請確認資料庫中已匯入該年度股價與營收。")
+
 
 # ========== 15. 頁尾 ==========
 st.markdown("---")
+
+# 獲取當前日期
+current_date = datetime.now()
+current_year_month = current_date.strftime("%Y-%m")
 
 # 網站統計資訊
 col1, col2, col3 = st.columns(3)
@@ -647,25 +620,34 @@ with col1:
     <div style="text-align: center;">
         <div style="font-size: 12px; color: #666;">網站訪問次數</div>
         <div style="font-size: 24px; font-weight: bold; color: #FF6B6B;">{st.session_state.visit_count}</div>
+        <div style="font-size: 10px; color: #999;">本次會話</div>
     </div>
     """, unsafe_allow_html=True)
 
 with col2:
-    st.markdown("""
+    # 計算實際數據完整性
+    if total_samples > 0:
+        completeness = (total_data_points / (total_samples * actual_months)) * 100
+    else:
+        completeness = 0
+    
+    st.markdown(f"""
     <div style="text-align: center;">
         <div style="font-size: 12px; color: #666;">數據完整性</div>
-        <div style="font-size: 24px; font-weight: bold; color: #4CAF50;">98.5%</div>
+        <div style="font-size: 24px; font-weight: bold; color: #4CAF50;">{completeness:.1f}%</div>
+        <div style="font-size: 10px; color: #999;">{int(total_data_points):,} / {int(total_samples * actual_months):,}</div>
     </div>
     """, unsafe_allow_html=True)
 
 with col3:
-    st.markdown("""
+    st.markdown(f"""
     <div style="text-align: center;">
         <div style="font-size: 12px; color: #666;">最後更新</div>
-        <div style="font-size: 24px; font-weight: bold; color: #2196F3;">2024-12</div>
+        <div style="font-size: 24px; font-weight: bold; color: #2196F3;">{current_year_month}</div>
+        <div style="font-size: 10px; color: #999;">即時更新</div>
     </div>
     """, unsafe_allow_html=True)
 
-st.caption("""
-Developed by StockRevenueLab | 讓 16 萬筆數據說真話 | 統計模式 v2.0 | AI分析功能已上線
+st.caption(f"""
+Developed by StockRevenueLab | 讓 16 萬筆數據說真話 | 統計模式 v2.0 | AI分析功能已上線 | 更新時間: {current_date.strftime('%Y-%m-%d %H:%M:%S')}
 """)
