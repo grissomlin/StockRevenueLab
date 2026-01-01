@@ -822,7 +822,7 @@ current_date = datetime.now()
 current_year_month = current_date.strftime("%Y-%m")
 
 # 網站統計資訊
-col2, col3 = st.columns(3)
+col2, col3 = st.columns(22
 
 
 with col2:
