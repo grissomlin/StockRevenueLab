@@ -719,19 +719,19 @@ if not df.empty:
             
             # 添加排序選項
             sort_col = st.selectbox("排序依據", 
-                                   ["年度實際漲幅%", "年增平均%", "月增平均%", "年增波動%", "月增波動%"])
+                                   ["年度股價實際漲幅%", "年增YoY平均%", "月增MoM平均", "年增YoY波動%", "月增MoM波動%"])
             res_df_sorted = res_df.sort_values(by=sort_col, ascending=False)
             
             st.dataframe(
                 res_df_sorted.style.format({
-                    "年度實際漲幅%": "{:.1f}%",
-                    "年增平均%": "{:.1f}%",
-                    "月增平均%": "{:.1f}%",
-                    "年增波動%": "{:.1f}%",
-                    "月增波動%": "{:.1f}%"
-                }).background_gradient(cmap='RdYlGn', subset=["年度實際漲幅%"])
-                .background_gradient(cmap='YlOrRd', subset=["年增平均%", "月增平均%"])
-                .background_gradient(cmap='Blues', subset=["年增波動%", "月增波動%"]),
+                    "年度股價實際漲幅%": "{:.1f}%",
+                    "年增YoY平均%": "{:.1f}%",
+                    "月增MoM平均": "{:.1f}%",
+                    "年增YoY波動%": "{:.1f}%",
+                    "月增MoM波動%": "{:.1f}%"
+                }).background_gradient(cmap='RdYlGn', subset=["年度股價實際漲幅%"])
+                .background_gradient(cmap='YlOrRd', subset=["年增YoY平均%", "月增MoM平均"])
+                .background_gradient(cmap='Blues', subset=["年增YoY波動%", "月增MoM波動%"]),
                 use_container_width=True,
                 height=500
             )
