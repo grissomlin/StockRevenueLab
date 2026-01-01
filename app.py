@@ -7,7 +7,17 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import time
-
+@st.cache_data(ttl=3600)
+def get_latest_data_date():
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            # 抓取營收表中最晚的月份
+            query = text("SELECT MAX(report_month) FROM monthly_revenue")
+            result = conn.execute(query).scalar()
+            return result
+    except:
+        return "未知"
 # ========== 1. 頁面配置 ==========
 st.set_page_config(
     page_title="StockRevenueLab | 趨勢觀測站",
@@ -58,17 +68,7 @@ def get_engine():
     except Exception as e:
         st.error("❌ 資料庫連線失敗，請檢查 Streamlit Secrets 設定。")
         st.stop()
-@st.cache_data(ttl=3600)
-def get_latest_data_date():
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            # 抓取營收表中最晚的月份
-            query = text("SELECT MAX(report_month) FROM monthly_revenue")
-            result = conn.execute(query).scalar()
-            return result
-    except:
-        return "未知"
+
 # ========== 🚀 核心變數定義區 (必須放在 fetch 數據之前) ==========
 st.sidebar.header("🔬 研究條件篩選")
 
