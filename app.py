@@ -30,17 +30,15 @@ st.markdown("""
 # 側邊欄導引
 st.sidebar.success("💡 想要看『勝率分析』？請點選左側選單的 probability 頁面！")
 
-# 網站計數器 (使用session state)
-if 'visit_count' not in st.session_state:
-    st.session_state.visit_count = 0
-st.session_state.visit_count += 1
+# 獲取資料庫最新日期
+latest_date = get_latest_data_date()
 
-# 顯示計數器
+# 顯示資料庫狀態（取代原本的計數器）
 st.sidebar.markdown(f"""
 <div style="text-align: center; margin: 20px 0;">
-    <div class="counter-badge">👁️ 今日訪問次數</div>
-    <h2 style="color: #FF6B6B; margin: 5px 0;">{st.session_state.visit_count}</h2>
-    <small style="color: #666;">感謝您的關注！</small>
+    <div class="counter-badge" style="background: linear-gradient(45deg, #4b6cb7, #182848);">📊 資料庫同步狀態</div>
+    <h2 style="color: #4b6cb7; margin: 5px 0;">{latest_date}</h2>
+    <small style="color: #666;">當前系統最新數據月份</small>
 </div>
 """, unsafe_allow_html=True)
 
@@ -60,7 +58,17 @@ def get_engine():
     except Exception as e:
         st.error("❌ 資料庫連線失敗，請檢查 Streamlit Secrets 設定。")
         st.stop()
-
+@st.cache_data(ttl=3600)
+def get_latest_data_date():
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            # 抓取營收表中最晚的月份
+            query = text("SELECT MAX(report_month) FROM monthly_revenue")
+            result = conn.execute(query).scalar()
+            return result
+    except:
+        return "未知"
 # ========== 🚀 核心變數定義區 (必須放在 fetch 數據之前) ==========
 st.sidebar.header("🔬 研究條件篩選")
 
