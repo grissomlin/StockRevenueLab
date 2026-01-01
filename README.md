@@ -9,7 +9,9 @@ StockRevenueLab 是一個整合「自動化數據爬蟲」、「雲端資料庫�
 * **🏠 分析沙龍中心**: [StockRevenueLab 數據觀測站](https://vocus.cc/salon/grissomlin/room/695636ee0c0c0689d1e2aa9f)
 * **📈 線上互動儀表板**: [立即開啟 Streamlit App](https://stockrevenuelab-jlfqljhuy5q9appppwy2bg8a.streamlit.app/)
 * **🐍 自動化爬蟲工具**: [Google Colab 一鍵執行](https://colab.research.google.com/github/grissomlin/StockRevenueLab/blob/main/%E3%80%8C%E8%B2%A1%E5%A0%B1%E5%84%80%E8%A1%A8%E6%9D%BF%E7%9B%B8%E9%97%9C%E7%A8%8B%E5%BC%8F%E7%A2%BC%E3%80%8D_github.ipynb)
+* **🤖 深度量化報告**: [AI 數據解析研究文](https://vocus.cc/salon/grissomlin/room/691d4eb84129bde974b100df) (透過 AI 診斷之台股深度分析)
 
+---
 ---
 
 ## 🛠️ 三大核心儀表板功能說明
