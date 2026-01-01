@@ -821,15 +821,8 @@ current_date = datetime.now()
 current_year_month = current_date.strftime("%Y-%m")
 
 # 網站統計資訊
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.markdown(f"""
-    <div style="text-align: center;">
-        <div style="font-size: 12px; color: #666;">網站訪問次數</div>
-        <div style="font-size: 24px; font-weight: bold; color: #FF6B6B;">{st.session_state.visit_count}</div>
-        <div style="font-size: 10px; color: #999;">本次會話</div>
-    </div>
-    """, unsafe_allow_html=True)
+col2, col3 = st.columns(3)
+
 
 with col2:
     # 只在有數據的情況下計算完整性
