@@ -195,22 +195,32 @@ def fetch_stat_summary(year, metric_col):
     with engine.connect() as conn:
         return pd.read_sql_query(text(query), conn)
 
-# ========== 5. AI分析提示詞生成 ==========
+# ========== 5. AI分析提示詞生成 (修正版) ==========
 def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pivot_df, total_samples):
     current_date = datetime.now().strftime("%Y-%m-%d")
-    
-    # 轉換統計摘要為文字格式
-    stat_summary_text = ""
-    for _, row in stat_summary.iterrows():
-        stat_summary_text += f"{row['return_bin']}: {row['stock_count']}檔, "
-        stat_summary_text += f"平均:{row['mean_val']:.1f}%, 中位數:{row['median_val']:.1f}%, "
-        stat_summary_text += f"正增長比例:{row['positive_rate']:.1f}%\n"
     
     # 獲取關鍵洞察
     max_mean_bin = stat_summary.loc[stat_summary['mean_val'].idxmax(), 'return_bin']
     max_mean_val = stat_summary['mean_val'].max()
+    max_median_bin = stat_summary.loc[stat_summary['median_val'].idxmax(), 'return_bin']
+    max_median_val = stat_summary['median_val'].max()
     max_pos_rate_bin = stat_summary.loc[stat_summary['positive_rate'].idxmax(), 'return_bin']
     max_pos_rate = stat_summary['positive_rate'].max()
+    
+    # 找出股價表現與營收表現的對比
+    # 例如：股價漲幅最高的區間，營收表現如何？
+    # 我們需要從 stat_summary 中找出這個資訊
+    
+    # 簡化統計摘要表格
+    summary_table = ""
+    for _, row in stat_summary.iterrows():
+        bin_name = row['return_bin']
+        if bin_name.startswith("00."):
+            bin_name = "下跌股票"
+        elif bin_name.startswith("11."):
+            bin_name = "漲幅1000%+"
+        
+        summary_table += f"| {bin_name} | {row['stock_count']}檔 | {row['mean_val']:.1f}% | {row['median_val']:.1f}% | {row['positive_rate']:.1f}% | {row['std_val']:.1f}% |\n"
     
     prompt = f"""# 台股營收與股價關聯分析報告
 分析時間: {current_date}
@@ -219,42 +229,72 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
 統計方法: {stat_method}
 總樣本數: {total_samples:,}檔
 
-## 數據摘要
-{stat_summary_text}
+## 🎯 重要數據說明（請仔細閱讀）
+**這不是「按營收分組看股價」，而是「按股價漲幅分組看營收」！**
+
+### 數據結構說明：
+1. **分組依據**：先按照股票「年度實際漲幅」分成不同區間
+   - 例：下跌股票、漲幅0-100%、漲幅100-200%...等
+2. **觀察指標**：在每個股價漲幅區間內，計算該區間股票的營收表現
+   - 營收平均值、中位數、正增長比例等
+
+### 換句話說：
+- 我們先找出「漲了很多」的股票（股價漲幅高）
+- 然後看這些「飆股」的營收表現如何
+- 反之，也看「股價下跌」的股票，它們的營收表現如何
+
+## 數據摘要表
+| 股價漲幅區間 | 股票數量 | 營收平均成長 | 營收中位數成長 | 正增長比例 | 波動率 |
+|--------------|----------|--------------|----------------|------------|--------|
+{summary_table}
 
 ## 關鍵發現
-1. 營收成長最強的區間: {max_mean_bin} (平均{max_mean_val:.1f}%)
-2. 正增長比例最高的區間: {max_pos_rate_bin} ({max_pos_rate:.1f}%的公司營收正增長)
+1. **營收表現最強的股價區間**: {max_mean_bin} (營收平均成長{max_mean_val:.1f}%)
+2. **營收中位數最高的股價區間**: {max_median_bin} (營收中位數成長{max_median_val:.1f}%)
+3. **正增長比例最高的股價區間**: {max_pos_rate_bin} ({max_pos_rate:.1f}%的公司營收正增長)
 
-## 分析任務
-請擔任專業股票分析師，根據以上數據回答：
+## 🎯 分析任務（重點方向）
+請擔任專業量化分析師，根據以上數據回答：
 
-### 1. 趨勢分析
-- 哪個漲幅區間的營收成長表現最突出？背後可能的原因是什麼？
-- 營收成長與股價漲幅之間呈現什麼樣的關聯性？
-- 有沒有出現「營收好但股價不漲」或「營收差但股價大漲」的異常現象？
+### 1. 股價漲幅 vs 營收表現的關係
+- **飆股（漲幅高的股票）** 的營收表現有什麼特徵？
+- **下跌股** 的營收表現如何？有沒有「營收好但股價跌」的現象？
+- 股價漲幅與營收成長之間是**線性關係**還是**非線性關係**？
 
 ### 2. 統計洞察
-- 從標準差和變異係數來看，哪些區間的營收波動最大？
-- 從偏度和峰度分析，各區間的營收分佈有什麼特徵？
-- 正增長比例與股價表現有什麼對應關係？
+- 從標準差和變異係數來看，哪個股價區間的營收**波動最大**？
+- **正增長比例**：哪個股價區間的公司「營收正增長」的比例最高？
+- 有沒有出現「營收表現與股價表現背離」的區間？
 
-### 3. 投資建議
-- 根據數據，投資者應該關注哪些營收特徵的股票？
-- 如何利用營收數據預測股價潛在漲幅？
-- 風險提示：需要注意哪些統計陷阱或數據限制？
+### 3. 投資策略啟示
+- 如果我想找「潛在飆股」，應該關注哪些營收特徵？
+- 如何利用「營收表現 vs 股價表現」的關係來制定投資策略？
+- **風險警示**：哪些統計陷阱需要注意？（例如：倖存者偏差、極端值影響）
 
-### 4. 策略建議
-- 提出具體的投資篩選策略（例如：尋找營收連續N個月正增長且波動率低的股票）
-- 不同風險偏好的投資者應該如何應用這些數據？
+### 4. 具體操作建議
+- 提出基於數據的**具體篩選條件**（例：尋找營收連續N個月正增長且波動率適中的股票）
+- 不同風險偏好（保守/積極）的投資者，應該如何應用這些洞察？
 
-## 格式要求
-請用中文回答，結構清晰，數據嚴謹，提供具體的百分比和統計數值支持觀點。
+## 📊 分析框架建議
+請按照以下順序分析：
+1. **描述性分析**：先描述各股價區間的營收表現
+2. **關聯性分析**：探討股價漲幅與營收表現的關係
+3. **異常值分析**：找出表現異常的區間（如：股價漲但營收差，或股價跌但營收好）
+4. **策略建議**：基於發現提出具體投資建議
 
-## 數據限制說明
-1. 時間範圍：{target_year}年1月看到的是前一年12月營收，12月看到的是11月營收
-2. 樣本範圍：台灣上市櫃公司共{total_samples:,}檔
-3. 統計方法：使用{stat_method}以減少極端值影響
+## ⚠️ 重要提醒
+1. **不要搞混因果**：這是相關性分析，不是因果分析
+2. **時間滯後性**：{target_year}年1月看到的是前一年12月營收，12月看到的是11月營收
+3. **統計方法**：使用{stat_method}以減少極端值影響
+4. **樣本限制**：僅分析台灣上市櫃公司{total_samples:,}檔
+
+## 📝 回答要求
+1. 用中文回答，結構清晰
+2. 每個觀點都要有具體的數據支持
+3. 避免過度推論，基於數據說話
+4. 提供實際可行的投資建議
+
+現在，請開始您的專業分析：
 """
     
     return prompt
@@ -412,8 +452,21 @@ if not df.empty:
             )
             
             # ========== 11. AI分析提示詞區塊 ==========
+            # ========== 11. AI分析提示詞區塊 ==========
             st.markdown("---")
             st.subheader("🤖 AI 智能分析助手")
+            
+            # 添加重要提醒
+            st.warning("""
+            **⚠️ 重要提醒（請複製給AI看）：**
+            這不是「按營收分組看股價」，而是「按股價漲幅分組看營收」！
+            
+            **數據結構：**
+            1. 先按照股票「年度實際漲幅」分成不同區間
+            2. 在每個股價漲幅區間內，計算該區間股票的營收表現
+            
+            **請AI分析：不同股價表現的股票，它們的營收表現有何特徵？**
+            """)
             
             # 生成AI提示詞
             prompt_text = generate_ai_prompt(target_year, metric_choice, stat_method, 
