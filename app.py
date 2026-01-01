@@ -653,19 +653,37 @@ if not df.empty:
 
     minguo_year = int(target_year) - 1911
     prev_minguo_year = minguo_year - 1
-
-    # 強大的 SQL：整合漲幅、平均營收與最新備註
+    # 修改後的 detail_query 區塊
     detail_query = f"""
     WITH target_stocks AS (
-        SELECT symbol, ((year_close - year_open) / year_open) * 100 as annual_ret 
+        SELECT symbol, ((year_close - year_open) / year_open) * 100 as annual_ret,
+        CASE 
+            -- 務必確保這裡的字串與 fetch_heatmap_data 裡定義的一模一樣
+            WHEN ((year_close - year_open) / year_open) * 100 <= -100 THEN '00. 下跌-100%以下'
+            WHEN ((year_close - year_open) / year_open) * 100 < -90 THEN '01. 下跌-100%至-90%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -80 THEN '02. 下跌-90%至-80%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -70 THEN '03. 下跌-80%至-70%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -60 THEN '04. 下跌-70%至-60%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -50 THEN '05. 下跌-60%至-50%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -40 THEN '06. 下跌-50%至-40%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -30 THEN '07. 下跌-40%至-30%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -20 THEN '08. 下跌-30%至-20%'
+            WHEN ((year_close - year_open) / year_open) * 100 < -10 THEN '09. 下跌-20%至-10%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 0 THEN '10. 下跌-10%至0%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 100 THEN '11. 上漲0-100%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 200 THEN '12. 上漲100-200%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 300 THEN '13. 上漲200-300%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 400 THEN '14. 上漲300-400%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 500 THEN '15. 上漲400-500%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 600 THEN '16. 上漲500-600%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 700 THEN '17. 上漲600-700%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 800 THEN '18. 上漲700-800%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 900 THEN '19. 上漲800-900%'
+            WHEN ((year_close - year_open) / year_open) * 100 < 1000 THEN '20. 上漲900-1000%'
+            ELSE '21. 上漲1000%以上'
+        END AS return_bin
         FROM stock_annual_k 
-        WHERE year = '{target_year}' AND (CASE 
-                WHEN (year_close - year_open) / year_open < 0 THEN '00. 下跌'
-                WHEN (year_close - year_open) / year_open >= 10 THEN '11. 1000%+'
-                ELSE LPAD(FLOOR((year_close - year_open) / year_open)::text, 2, '0') || '. ' || 
-                     (FLOOR((year_close - year_open) / year_open)*100)::text || '-' || 
-                     ((FLOOR((year_close - year_open) / year_open)+1)*100)::text || '%'
-            END) = '{selected_bin}'
+        WHERE year = '{target_year}'
     ),
     latest_remarks AS (
         SELECT DISTINCT ON (stock_id) stock_id, remark 
@@ -674,7 +692,6 @@ if not df.empty:
           AND remark IS NOT NULL AND remark <> '-' AND remark <> ''
         ORDER BY stock_id, report_month DESC
     )
-
     SELECT 
         m.stock_id as "代號", 
         m.stock_name as "名稱",
@@ -687,8 +704,9 @@ if not df.empty:
     FROM monthly_revenue m
     JOIN target_stocks t ON m.stock_id = SPLIT_PART(t.symbol, '.', 1)
     LEFT JOIN latest_remarks r ON m.stock_id = r.stock_id
-    WHERE (m.report_month LIKE '{minguo_year}_%' AND m.report_month < '{minguo_year}_12' OR m.report_month = '{prev_minguo_year}_12')
-      AND (m.stock_name LIKE '%{search_keyword}%' OR m.remark LIKE '%{search_keyword}%')
+    WHERE t.return_bin = '{selected_bin}'  -- 這裡直接對齊字串
+      AND (m.report_month LIKE '{minguo_year}_%' AND m.report_month < '{minguo_year}_12' OR m.report_month = '{prev_minguo_year}_12')
+      AND (m.stock_name LIKE '%{search_keyword}%' OR (r.remark IS NOT NULL AND r.remark LIKE '%{search_keyword}%'))
     GROUP BY m.stock_id, m.stock_name, t.annual_ret, r.remark
     ORDER BY "年度實際漲幅%" DESC 
     LIMIT {display_limit};
