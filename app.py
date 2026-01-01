@@ -166,12 +166,19 @@ def fetch_heatmap_data(year, metric_col, stat_method):
         FROM stock_annual_k
         WHERE year = '{year}'
     ),
+
     monthly_stats AS (
-        SELECT stock_id, report_month, {metric_col} 
-        FROM monthly_revenue
-        WHERE report_month = '{prev_minguo_year}_12'
-           OR (report_month LIKE '{minguo_year}_%' AND LENGTH(report_month) <= 7)
+            -- 修正：只抓取去年12月到今年11月，共12個月
+            SELECT stock_id, report_month, {metric_col} 
+            FROM monthly_revenue
+            WHERE report_month = '{prev_minguo_year}_12'  -- 去年12月
+               OR (report_month LIKE '{minguo_year}_%' 
+                   AND report_month < '{minguo_year}_12'  -- 排除當年12月
+                   AND LENGTH(report_month) <= 7)
     )
+
+
+    
     SELECT 
         b.return_bin,
         b.bin_order,
@@ -262,11 +269,17 @@ def fetch_stat_summary(year, metric_col):
         WHERE year = '{year}'
     ),
     monthly_stats AS (
-        SELECT stock_id, report_month, {metric_col} 
-        FROM monthly_revenue
-        WHERE report_month = '{prev_minguo_year}_12'
-           OR (report_month LIKE '{minguo_year}_%' AND LENGTH(report_month) <= 7)
-    )
+            -- 修正：確保統計摘要也只計算這12個月
+            SELECT stock_id, report_month, {metric_col} 
+            FROM monthly_revenue
+            WHERE report_month = '{prev_minguo_year}_12'
+               OR (report_month LIKE '{minguo_year}_%' 
+                   AND report_month < '{minguo_year}_12'
+                   AND LENGTH(report_month) <= 7)
+        )
+
+
+    
     SELECT 
         b.return_bin,
         b.bin_order,
@@ -654,13 +667,13 @@ if not df.empty:
             END) = '{selected_bin}'
     ),
     latest_remarks AS (
-        -- 取得該年度最後一個有備註的月份資料
         SELECT DISTINCT ON (stock_id) stock_id, remark 
         FROM monthly_revenue 
-        WHERE (report_month LIKE '{minguo_year}_%' OR report_month = '{prev_minguo_year}_12')
+        WHERE (report_month LIKE '{minguo_year}_%' AND report_month < '{minguo_year}_12' OR report_month = '{prev_minguo_year}_12')
           AND remark IS NOT NULL AND remark <> '-' AND remark <> ''
         ORDER BY stock_id, report_month DESC
     )
+
     SELECT 
         m.stock_id as "代號", 
         m.stock_name as "名稱",
@@ -673,7 +686,7 @@ if not df.empty:
     FROM monthly_revenue m
     JOIN target_stocks t ON m.stock_id = SPLIT_PART(t.symbol, '.', 1)
     LEFT JOIN latest_remarks r ON m.stock_id = r.stock_id
-    WHERE (m.report_month LIKE '{minguo_year}_%' OR m.report_month = '{prev_minguo_year}_12')
+    WHERE (m.report_month LIKE '{minguo_year}_%' AND m.report_month < '{minguo_year}_12' OR m.report_month = '{prev_minguo_year}_12')
       AND (m.stock_name LIKE '%{search_keyword}%' OR m.remark LIKE '%{search_keyword}%')
     GROUP BY m.stock_id, m.stock_name, t.annual_ret, r.remark
     ORDER BY "年度實際漲幅%" DESC 
