@@ -304,11 +304,11 @@ def fetch_stat_summary(year, metric_col):
     with engine.connect() as conn:
         return pd.read_sql_query(text(query), conn)
 
-# ========== 5. AI分析提示詞生成 (修改版，反映新的分組間隔) ==========
+# ========== 5. AI分析提示詞生成 (整合全維度數據 + 保留原所有任務) ==========
 def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pivot_df, total_samples):
     current_date = datetime.now().strftime("%Y-%m-%d")
     
-    # 找出最慘的下跌區間
+    # 1. 找出最慘的下跌區間 (保留原邏輯)
     worst_bins = stat_summary[stat_summary['return_bin'].str.contains('下跌')].copy()
     if not worst_bins.empty:
         worst_bin = worst_bins.loc[worst_bins['avg_annual_return'].idxmin()]
@@ -316,11 +316,9 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
         worst_avg_return = worst_bin['avg_annual_return']
         worst_pos_rate = worst_bin['positive_rate']
     else:
-        worst_bin_name = "無資料"
-        worst_avg_return = 0
-        worst_pos_rate = 0
+        worst_bin_name = "無資料"; worst_avg_return = 0; worst_pos_rate = 0
     
-    # 找出最好的上漲區間
+    # 2. 找出最好的上漲區間 (保留原邏輯)
     best_bins = stat_summary[stat_summary['return_bin'].str.contains('上漲')].copy()
     if not best_bins.empty:
         best_bin = best_bins.loc[best_bins['avg_annual_return'].idxmax()]
@@ -328,28 +326,26 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
         best_avg_return = best_bin['avg_annual_return']
         best_pos_rate = best_bin['positive_rate']
     else:
-        best_bin_name = "無資料"
-        best_avg_return = 0
-        best_pos_rate = 0
-    
-    # 簡化統計摘要表格（顯示前5個下跌和所有上漲）
-    summary_table = ""
+        best_bin_name = "無資料"; best_avg_return = 0; best_pos_rate = 0
+
+    # 3. 建立「全維度」數據摘要表 (升級此處，包含標準差、變異係數、四分位距等)
+    summary_table = "| 漲幅區間 | 股票數量 | 均漲幅 | 均營收 | 中位數 | 標準差 | 變異係數 | 四分位距 | 正成長% |\n"
+    summary_table += "|----------|----------|--------|--------|--------|--------|----------|----------|---------|\n"
     for _, row in stat_summary.iterrows():
         bin_name = row['return_bin']
-        # 簡化顯示
-        if "下跌" in bin_name:
-            simple_name = bin_name.split(' ')[1]  # 取出後面的部分
-        else:
-            simple_name = bin_name.split(' ')[1] if len(bin_name.split(' ')) > 1 else bin_name
-        
-        summary_table += f"| {simple_name} | {row['stock_count']}檔 | {row['avg_annual_return']:.1f}% | {row['mean_val']:.1f}% | {row['positive_rate']:.1f}% |\n"
+        summary_table += (
+            f"| {bin_name} | {row['stock_count']}檔 | {row['avg_annual_return']:.1f}% "
+            f"| {row['mean_val']:.1f}% | {row['median_val']:.1f}% | {row['std_val']:.1f} "
+            f"| {row['cv_val']:.2f} | {row['iqr_val']:.1f} | {row['positive_rate']:.1f}% |\n"
+        )
     
-    # 計算一些關鍵統計
+    # 4. 計算背景統計 (保留原邏輯)
     total_falling_stocks = stat_summary[stat_summary['return_bin'].str.contains('下跌')]['stock_count'].sum()
     total_rising_stocks = stat_summary[stat_summary['return_bin'].str.contains('上漲')]['stock_count'].sum()
     falling_ratio = total_falling_stocks / total_samples * 100
     rising_ratio = total_rising_stocks / total_samples * 100
     
+    # 5. 組合最終提示詞 (完全保留您原本的分析框架與任務說明)
     prompt = f"""# 台股營收與股價關聯分析報告
 分析時間: {current_date}
 分析年度: {target_year}年
@@ -367,18 +363,16 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
    - 下跌股票：每10%一個間隔（共11個區間，從-100%以下到-10%~0%）
    - 上漲股票：每100%一個間隔（共11個區間，從0-100%到1000%以上）
 
-2. **觀察指標**：在每個股價漲幅區間內，計算該區間股票的營收表現
+2. **觀察指標**：在每個股價漲幅區間內，計算該區間股票的營收全維度表現（包含離散程度指標）
 
 ### 關鍵發現：
 1. **最慘的下跌區間**: {worst_bin_name} (平均股價漲幅{worst_avg_return:.1f}%，營收正增長比例{worst_pos_rate:.1f}%)
 2. **最好的上漲區間**: {best_bin_name} (平均股價漲幅{best_avg_return:.1f}%，營收正增長比例{best_pos_rate:.1f}%)
 
-## 數據摘要表
-| 股價漲幅區間 | 股票數量 | 平均股價漲幅 | 營收平均成長 | 正增長比例 |
-|--------------|----------|--------------|--------------|------------|
+## 數據摘要全表 (包含離散指標)
 {summary_table}
 
-## 🎯 分析任務（請特別關注下跌區間的細分分析）
+## 🎯 分析任務（請特別關注下跌區間的細分分析與離散指標）
 請擔任專業量化分析師，根據以上細分數據回答：
 
 ### 1. 下跌股票的梯度分析（每10%一個等級）
@@ -391,10 +385,10 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
 - **甜蜜點分析**：哪個漲幅區間的營收表現最突出？是100-200%還是200-300%？
 - **極端上漲股**（漲500%以上）：營收表現有何特徵？是持續高成長還是波動大？
 
-### 3. 對比分析：下跌vs上漲
+### 3. 對比分析：下跌vs上漲 (新增離散指標維度)
 - **營收正增長比例**：上漲股票 vs 下跌股票，差距有多大？
-- **營收波動率**：哪個區間的營收波動最大？是最弱的下跌股還是最強的上漲股？
-- **異常值分析**：有沒有「股價跌但營收好」或「股價漲但營收差」的明顯案例？
+- **營收波動率 (利用變異係數/標準差)**：哪個區間的營收波動最大？是最弱的下跌股還是最強的上漲股？
+- **異常值分析**：有沒有「股價跌但營收好」或「股價漲但營收差」的明顯案例？請參考中位數與平均值的偏離。
 
 ### 4. 投資策略啟示
 - **抄底策略**：根據10%間隔數據，哪個跌幅區間最適合抄底？
@@ -405,7 +399,7 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
 請按照以下順序分析：
 1. **下跌梯度分析**：從-100%到0%，分析每10%間隔的營收表現變化
 2. **上漲層級分析**：從0%到1000%以上，分析每100%間隔的營收表現變化
-3. **對比分析**：比較下跌和上漲股票的營收特徵差異
+3. **對比分析**：比較下跌和上漲股票的營收特徵差異 (請務必運用標準差與變異係數)
 4. **投資應用**：提出基於梯度數據的具體投資策略
 
 ## ⚠️ 重要提醒
@@ -417,35 +411,12 @@ def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pi
 ## 📝 回答要求
 1. 用中文回答，結構清晰
 2. 特別關注**下跌10%間隔的細緻變化**
-3. 每個觀點都要有具體的數據支持
+3. 每個觀點都要有具體的數據支持（特別是中位數、標準差、變異係數等新維度）
 4. 提供基於梯度分析的具體投資建議
 
 現在，請開始您的專業分析：
 """
-    
     return prompt
-
-# ========== 6. 側邊欄 UI ==========
-st.sidebar.header("🔬 研究條件篩選")
-target_year = st.sidebar.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)], index=1)
-metric_choice = st.sidebar.radio("成長指標", ["年增率 (YoY)", "月增率 (MoM)"], help="YoY看長期趨勢，MoM看短期爆發")
-
-# 進階統計模式選項
-stat_methods = [
-    "中位數 (排除極端值)",
-    "平均值 (含極端值)", 
-    "標準差 (波動程度)",
-    "變異係數 (相對波動)",
-    "偏度 (分佈形狀)",
-    "峰度 (尾部厚度)",
-    "四分位距 (離散程度)",
-    "正樣本比例"
-]
-
-stat_method = st.sidebar.selectbox("統計指標模式", stat_methods, index=0, 
-                                   help="選擇不同的統計量來觀察數據特徵")
-
-target_col = "yoy_pct" if metric_choice == "年增率 (YoY)" else "mom_pct"
 
 # ========== 7. 儀表板主視圖 ==========
 # 初始化變數，避免頁尾報錯
