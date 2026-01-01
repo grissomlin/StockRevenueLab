@@ -695,11 +695,11 @@ if not df.empty:
     SELECT 
         m.stock_id as "代號", 
         m.stock_name as "名稱",
-        ROUND(t.annual_ret::numeric, 1) as "年度實際漲幅%",
-        ROUND(AVG(m.yoy_pct)::numeric, 1) as "年增平均%", 
-        ROUND(AVG(m.mom_pct)::numeric, 1) as "月增平均%",
-        ROUND(STDDEV(m.yoy_pct)::numeric, 1) as "年增波動%",
-        ROUND(STDDEV(m.mom_pct)::numeric, 1) as "月增波動%",
+        ROUND(t.annual_ret::numeric, 1) as "年度股價實際漲幅%",
+        ROUND(AVG(m.yoy_pct)::numeric, 1) as "年增YoY平均%", 
+        ROUND(AVG(m.mom_pct)::numeric, 1) as "月增MoM平均%",
+        ROUND(STDDEV(m.yoy_pct)::numeric, 1) as "年增YoY波動%",
+        ROUND(STDDEV(m.mom_pct)::numeric, 1) as "月增MoM波動%",
         r.remark as "最新營收備註"
     FROM monthly_revenue m
     JOIN target_stocks t ON m.stock_id = SPLIT_PART(t.symbol, '.', 1)
