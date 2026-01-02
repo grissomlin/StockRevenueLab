@@ -18,7 +18,7 @@ except ImportError:
 
 # ========== 1. 頁面配置 ==========
 st.set_page_config(
-    page_title="公告行為研究室 4.3 | StockRevenueLab", 
+    page_title="公告行為研究室 4.4 | StockRevenueLab", 
     layout="wide",
     page_icon="📊"
 )
@@ -200,11 +200,22 @@ def detect_outliers(df, col, threshold=1.5):
     outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
     return outliers
 
-# ========== 4. 核心 SQL 邏輯 (初次爆發) ==========
+# ========== 4. 核心 SQL 邏輯 (初次爆發) - 修改為支援價格計算方式 ==========
 @st.cache_data(ttl=3600)
-def fetch_timing_data(year, metric_col, limit, keyword):
+def fetch_timing_data(year, metric_col, limit, keyword, price_field="w_close"):
+    """
+    修改SQL查詢以支援不同的價格計算方式
+    price_field: 可以是 'w_close' (收盤價) 或 'w_high' (最高價)
+    """
     engine = get_engine()
     minguo_year = int(year) - 1911
+    
+    # 根據價格計算方式選擇欄位
+    if price_field == "w_high":
+        price_select = "w_high"
+    else:
+        price_select = "w_close"
+    
     query = f"""
     WITH raw_events AS (
         SELECT stock_id, stock_name, report_month, {metric_col}, remark,
@@ -225,9 +236,9 @@ def fetch_timing_data(year, metric_col, limit, keyword):
           AND (remark LIKE '%%{keyword}%%' OR stock_name LIKE '%%{keyword}%%')
     ),
     weekly_calc AS (
-        SELECT symbol, date, w_close,
-               (w_close - LAG(w_close) OVER (PARTITION BY symbol ORDER BY date)) / 
-               NULLIF(LAG(w_close) OVER (PARTITION BY symbol ORDER BY date), 0) * 100 as weekly_ret
+        SELECT symbol, date, {price_select},
+               ({price_select} - LAG({price_select}) OVER (PARTITION BY symbol ORDER BY date)) / 
+               NULLIF(LAG({price_select}) OVER (PARTITION BY symbol ORDER BY date), 0) * 100 as weekly_ret
         FROM stock_weekly_k
     ),
     final_detail AS (
@@ -258,7 +269,29 @@ with st.sidebar:
     search_remark = st.text_input("🔍 關鍵字搜尋", "")
     
     st.markdown("---")
-    st.markdown("### 📈 統計設定")
+    # 新增：股價計算方式選單
+    st.markdown("### 📈 股價計算方式")
+    price_calc = st.radio(
+        "選擇計算基準",
+        ["收盤價 (實戰版)", "最高價 (極限版)"],
+        help="""
+        收盤價 (實戰版)：使用周收盤價計算，代表實際可實現的報酬
+        最高價 (極限版)：使用周最高價計算，代表理論最大潛力漲幅
+        """,
+        index=0
+    )
+    
+    # 根據選擇決定 SQL 中的價格欄位
+    if price_calc == "收盤價 (實戰版)":
+        price_field = "w_close"
+        price_label = "收盤價"
+        st.info("使用周收盤價計算，代表實際可實現的報酬")
+    else:
+        price_field = "w_high"
+        price_label = "最高價"
+        st.warning("使用周最高價計算，代表理論最大潛力漲幅")
+    
+    st.markdown("### 📊 統計設定")
     show_advanced = st.checkbox("顯示進階統計", value=True)
     detect_outliers_opt = st.checkbox("檢測異常值", value=False)
     
@@ -267,24 +300,28 @@ with st.sidebar:
     st.info("""
     1. 選擇分析年度與指標
     2. 調整爆發門檻值
-    3. 可選關鍵字篩選
-    4. 查看各階段統計分析
-    5. 使用AI深度診斷
+    3. 選擇股價計算方式
+    4. 可選關鍵字篩選
+    5. 查看各階段統計分析
+    6. 使用AI深度診斷
     """)
 
 # 主標題
-st.title(f"📊 {target_year}年 公告行為研究室 4.3")
-st.caption("增強版 - 含偏度、峰度、變異係數等進階統計分析")
+st.title(f"📊 {target_year}年 公告行為研究室 4.4")
+st.caption(f"增強版 - {price_calc} | 含偏度、峰度、變異係數等進階統計分析")
 # 加入數據侷限性說明
-st.warning("""
-> 💡 **注意：本分析僅為概念示範（demo）** > 為簡化計算，「公告前後一個月漲跌幅」係以 **周K線資料近似估算**（取公告日前後約4週的平均週報酬推算），  
-> 並未使用日頻數據或真實月K線，亦未進行複利累積調整。  
-> 因此數值僅供「趨勢參考」，**不建議作為投資依據**。  
-> 若您希望進行嚴謹分析，請自行取得高頻行情資料並採用標準事件研究法（Event Study）流程。
+st.warning(f"""
+> 💡 **注意：本分析僅為概念示範（demo）** 
+> - 為簡化計算，「公告前後一個月漲跌幅」係以 **周K線資料近似估算**（取公告日前後約4週的平均週報酬推算），
+> - 股價計算方式：**{price_calc}**（使用周{price_label}計算漲跌幅）
+> - 未使用日頻數據或真實月K線，亦未進行複利累積調整。
+> - 因此數值僅供「趨勢參考」，**不建議作為投資依據**。
+> - 若您希望進行嚴謹分析，請自行取得高頻行情資料並採用標準事件研究法（Event Study）流程。
 """)
+
 # 獲取數據
 with st.spinner("正在載入數據..."):
-    df = fetch_timing_data(target_year, study_metric, threshold, search_remark)
+    df = fetch_timing_data(target_year, study_metric, threshold, search_remark, price_field)
 
 if not df.empty:
     # ========== A. 數據看板 (Mean vs Median) ==========
@@ -305,7 +342,7 @@ if not df.empty:
     fm_mean, fm_med, fm_count = get_stats('after_month')   # T+1月
     
     # 顯示數據看板
-    st.subheader("📈 核心數據看板")
+    st.subheader(f"📈 核心數據看板 - {price_calc}")
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     
     col1.metric("樣本總數", f"{total_n} 檔", delta=None)
@@ -318,7 +355,7 @@ if not df.empty:
     st.markdown("---")
     
     # ========== B. 原始明細清單 ==========
-    st.subheader("📋 原始數據明細")
+    st.subheader(f"📋 原始數據明細 - {price_calc}")
     
     # 控制按鈕
     col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
@@ -326,7 +363,7 @@ if not df.empty:
         st.download_button(
             label="📥 下載 CSV", 
             data=df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), 
-            file_name=f'stock_revenue_{target_year}.csv',
+            file_name=f'stock_revenue_{target_year}_{price_label}.csv',
             mime='text/csv'
         )
     with col_btn2:
@@ -339,14 +376,15 @@ if not df.empty:
         copy_data = df[['stock_id', 'stock_name', 'growth_val', 'pre_month', 'pre_week', 'after_week_1', 'after_month', 'remark']].head(300)
         md_table = copy_data.to_markdown(index=False)
         
-        st.code(f"""請針對以下 {target_year} 年營收爆發股數據進行診斷：
+        st.code(f"""請針對以下 {target_year} 年營收爆發股數據進行診斷（使用{price_calc}）：
 
 {md_table}
 
 分析重點：
 1. 右尾效應分析：檢查T-1月的高報酬股票特徵
 2. 資訊不對稱：比較T-1月與T-1周的報酬分佈
-3. 策略有效性：評估T+1月報酬的持續性""", language="text")
+3. 策略有效性：評估T+1月報酬的持續性
+4. 計算方式影響：{price_calc}對分析結果的影響""", language="text")
     
     # 添加連結欄位
     df['技術圖表'] = df['stock_id'].apply(lambda x: f"https://www.wantgoo.com/stock/{x}/technical-chart")
@@ -367,7 +405,7 @@ if not df.empty:
     
     # ========== C. 進階統計指標 ==========
     if show_advanced:
-        st.subheader("🔬 進階統計分析")
+        st.subheader(f"🔬 進階統計分析 - {price_calc}")
         
         # 定義分析階段
         stages = {
@@ -399,7 +437,7 @@ if not df.empty:
             col_stat1, col_stat2 = st.columns([2, 1])
             
             with col_stat1:
-                st.write("**統計指標表**")
+                st.write(f"**統計指標表 ({price_calc})**")
                 # 格式化顯示
                 formatted_df = display_df.style.format({
                     '均值%': '{:.1f}',
@@ -414,7 +452,7 @@ if not df.empty:
                 st.dataframe(formatted_df, use_container_width=True)
             
             with col_stat2:
-                st.write("**統計圖示**")
+                st.write(f"**統計圖示 ({price_label})**")
                 
                 # 選擇要視覺化的指標
                 metric_choice = st.selectbox(
@@ -439,7 +477,7 @@ if not df.empty:
                         line=dict(color='blue', width=2)
                     ))
                     fig.update_layout(
-                        title="偏度與峰度趨勢",
+                        title=f"偏度與峰度趨勢 ({price_calc})",
                         yaxis=dict(title='偏度'),
                         yaxis2=dict(title='峰度', overlaying='y', side='right'),
                         height=300
@@ -464,7 +502,7 @@ if not df.empty:
                         line=dict(color='blue', width=3)
                     ))
                     fig.update_layout(
-                        title="均值 vs 中位數",
+                        title=f"均值 vs 中位數 ({price_calc})",
                         yaxis_title="報酬率 %",
                         height=300
                     )
@@ -472,7 +510,7 @@ if not df.empty:
             
             # 異常值檢測
             if detect_outliers_opt:
-                st.subheader("⚠️ 異常值檢測")
+                st.subheader(f"⚠️ 異常值檢測 - {price_calc}")
                 
                 outlier_col = st.selectbox(
                     "選擇檢測階段",
@@ -484,7 +522,7 @@ if not df.empty:
                 outliers = detect_outliers(df, col_name, threshold=1.5)
                 
                 if not outliers.empty:
-                    st.write(f"在 {outlier_col} 檢測到 {len(outliers)} 個異常值:")
+                    st.write(f"在 {outlier_col} 檢測到 {len(outliers)} 個異常值 ({price_calc}):")
                     st.dataframe(outliers[['stock_id', 'stock_name', col_name, 'remark']], use_container_width=True)
                 else:
                     st.info(f"在 {outlier_col} 未檢測到明顯異常值")
@@ -492,7 +530,7 @@ if not df.empty:
         st.markdown("---")
     
     # ========== D. 完整五張分佈圖 ==========
-    st.subheader("📊 階段報酬分佈分析")
+    st.subheader(f"📊 階段報酬分佈分析 - {price_calc}")
     
     # 使用tabs組織分佈圖
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -505,83 +543,88 @@ if not df.empty:
     
     with tab1:
         fig1 = create_big_hist(df, "pre_month", 
-                              "T-1月 大戶佈局區", 
+                              f"T-1月 大戶佈局區 ({price_calc})", 
                               "#8a2be2",
-                              "若平均值顯著大於中位數且偏度為正，代表大資金早已進場『拉抬少數權值股』。")
+                              f"若平均值顯著大於中位數且偏度為正，代表大資金早已進場『拉抬少數權值股』。計算方式：{price_calc}")
         if fig1:
             st.plotly_chart(fig1, use_container_width=True)
-            st.info("""
-            **科學解讀**:
+            st.info(f"""
+            **科學解讀 ({price_calc})**:
             - **偏度 > 0.5**: 強烈右偏，顯示少數股票被大幅拉抬
             - **峰度 > 3**: 高峰態，報酬集中於極端值
             - **變異係數高**: 個股間差異大，選擇困難
             - **IQR寬**: 事前預測區間大，風險較高
+            - **計算方式影響**: {price_calc}可能放大或縮小右尾效應
             """)
     
     with tab2:
         fig2 = create_big_hist(df, "pre_week", 
-                              "T-1周 短線預跑區", 
+                              f"T-1周 短線預跑區 ({price_calc})", 
                               "#ff4b4b",
-                              "若中位數趨近於0但平均值為正，代表只有極少數業內資訊領先者在偷跑。")
+                              f"若中位數趨近於0但平均值為正，代表只有極少數業內資訊領先者在偷跑。計算方式：{price_calc}")
         if fig2:
             st.plotly_chart(fig2, use_container_width=True)
-            st.info("""
-            **科學解讀**:
+            st.info(f"""
+            **科學解讀 ({price_calc})**:
             - **偏度接近0**: 對稱分佈，無明顯資訊優勢
             - **上漲機率低**: 多數股票在公告前並無明顯漲勢
             - **IQR窄**: 報酬集中，預測相對容易
             - **變異係數低**: 個股表現相對一致
+            - **計算方式影響**: {price_calc}可能影響短線報酬的極端值
             """)
     
     with tab3:
         fig3 = create_big_hist(df, "announce_week", 
-                              "T周 市場反應", 
+                              f"T周 市場反應 ({price_calc})", 
                               "#ffaa00",
-                              "營收正式釋出後。若平均與中位線重合，代表利多已成為市場共識。")
+                              f"營收正式釋出後。若平均與中位線重合，代表利多已成為市場共識。計算方式：{price_calc}")
         if fig3:
             st.plotly_chart(fig3, use_container_width=True)
-            st.info("""
-            **科學解讀**:
+            st.info(f"""
+            **科學解讀 ({price_calc})**:
             - **均值 > 中位數**: 右尾效應，少數股票反應過度
             - **峰度值**: 反映市場對資訊解讀的一致性
             - **上漲機率**: 顯示利多被市場認可的程度
             - **IQR**: 市場反應的分歧程度
+            - **計算方式影響**: {price_calc}可能改變市場反應的強度估計
             """)
     
     with tab4:
         fig4 = create_big_hist(df, "after_week_1", 
-                              "T+1周 公告後續", 
+                              f"T+1周 公告後續 ({price_calc})", 
                               "#32cd32",
-                              "利多公佈後的追價動能。若均值為正，代表有持續買盤。")
+                              f"利多公佈後的追價動能。若均值為正，代表有持續買盤。計算方式：{price_calc}")
         if fig4:
             st.plotly_chart(fig4, use_container_width=True)
-            st.info("""
-            **科學解讀**:
+            st.info(f"""
+            **科學解讀 ({price_calc})**:
             - **均值方向**: 判斷追價動能強弱
             - **偏度變化**: 從T周到T+1周的偏度轉變
             - **上漲機率變化**: 顯示利多效應的擴散程度
             - **變異係數**: 後續走勢的分歧度
+            - **計算方式影響**: {price_calc}可能影響追價動能的評估
             """)
     
     with tab5:
         fig5 = create_big_hist(df, "after_month", 
-                              "T+1月 趨勢結局", 
+                              f"T+1月 趨勢結局 ({price_calc})", 
                               "#1e90ff",
-                              "波段收尾。若中位數為負代表大多數爆發股最終都會回吐，只有少數強者恆強。")
+                              f"波段收尾。若中位數為負代表大多數爆發股最終都會回吐，只有少數強者恆強。計算方式：{price_calc}")
         if fig5:
             st.plotly_chart(fig5, use_container_width=True)
-            st.info("""
-            **科學解讀**:
+            st.info(f"""
+            **科學解讀 ({price_calc})**:
             - **中位數方向**: 判斷策略的普適性
             - **右尾/左尾比**: 強者恆強 vs 利多出盡的比例
             - **峰度**: 極端報酬的集中程度
             - **IQR**: 最終報酬的分佈範圍
+            - **計算方式影響**: {price_calc}可能改變長期報酬的分布型態
             """)
     
     st.markdown("---")
     
     # ========== E. AI 診斷 (增強版) ==========
-    st.subheader("🤖 AI 投資行為深度診斷")
+    st.subheader(f"🤖 AI 投資行為深度診斷 - {price_calc}")
     
     # 生成分佈摘要
     dist_txt = (f"T-1月分佈: {get_ai_summary_dist(df, 'pre_month')}\n"
@@ -599,9 +642,15 @@ if not df.empty:
             summary_lines.append(line)
         return "\n".join(summary_lines)
     
-    # 增強版提示詞
+    # 增強版提示詞（包含價格計算方式）
     prompt_text = f"""
 # 台股營收爆發行為量化分析報告
+
+## 計算方式說明
+- **股價計算方式**: {price_calc}
+- **計算基準**: 使用周{price_label}計算漲跌幅
+- **實務意義**: {'代表實際可實現的報酬' if price_field == 'w_close' else '代表理論最大潛力漲幅'}
+
 ## 數據概要
 - 分析年度：{target_year}
 - 樣本規模：{total_n}檔符合{threshold}%增長門檻
@@ -610,45 +659,52 @@ if not df.empty:
 - 樣本特性：初次爆發(前一月未達標，本月首度衝破{threshold}%)
 
 ## 核心統計數據
-【全階段平均報酬】：
+【全階段平均報酬】({price_calc})：
 - 公告前一個月: {m_mean}% / 公告前一週: {w_mean}% / 公告當週: {a_mean}% / 公告後一週: {fw_mean}% / 公告後一個月: {fm_mean}%
 
-【進階統計特徵】：
+【進階統計特徵】({price_calc})：
 {create_stat_summary(advanced_stats) if advanced_stats else "無進階統計數據"}
 
 【分佈摘要數據】：
 {dist_txt}
 
 ## 診斷分析問題
-請針對以上數據進行專業量化診斷：
+請針對以上數據進行專業量化診斷，特別注意{price_calc}的影響：
 
-1. **資訊不對稱分析**：
-   - 從 T-1 月與 T-1 周的「偏度值」({advanced_stats.get('T-1月', {}).get('skew', 'N/A')} vs {advanced_stats.get('T-1周', {}).get('skew', 'N/A')})來看，是否有證據顯示「主力/內部人提早知道訊息並佈局」？
-   - 右尾/左尾比({advanced_stats.get('T-1月', {}).get('tail_ratio', 'N/A')})如何解讀？
+### 1. 資訊不對稱分析 ({price_calc})
+- 從 T-1 月與 T-1 周的「偏度值」({advanced_stats.get('T-1月', {}).get('skew', 'N/A')} vs {advanced_stats.get('T-1周', {}).get('skew', 'N/A')})來看，是否有證據顯示「主力/內部人提早知道訊息並佈局」？
+- 右尾/左尾比({advanced_stats.get('T-1月', {}).get('tail_ratio', 'N/A')})如何解讀？{price_calc}是否放大了右尾效應？
 
-2. **市場反應效率**：
-   - T周偏度({advanced_stats.get('T周', {}).get('skew', 'N/A')})與峰度({advanced_stats.get('T周', {}).get('kurtosis', 'N/A')})顯示市場呈現的是「理性定價」還是「過度反應」？
-   - T+1周表現(均值{fw_mean}%)相對於T周，顯示的是「追加買盤」還是「利多出盡」？
+### 2. 市場反應效率 ({price_calc})
+- T周偏度({advanced_stats.get('T周', {}).get('skew', 'N/A')})與峰度({advanced_stats.get('T周', {}).get('kurtosis', 'N/A')})顯示市場呈現的是「理性定價」還是「過度反應」？
+- T+1周表現(均值{fw_mean}%)相對於T周，顯示的是「追加買盤」還是「利多出盡」？{price_calc}如何影響這個判斷？
 
-3. **風險與報酬特徵**：
-   - 變異係數趨勢(T-1月:{advanced_stats.get('T-1月', {}).get('cv', 'N/A')}% → T+1月:{advanced_stats.get('T+1月', {}).get('cv', 'N/A')}%)反映什麼風險變化？
-   - 峰度值變化如何影響「極端報酬」的發生機率？
+### 3. 風險與報酬特徵 ({price_calc})
+- 變異係數趨勢(T-1月:{advanced_stats.get('T-1月', {}).get('cv', 'N/A')}% → T+1月:{advanced_stats.get('T+1月', {}).get('cv', 'N/A')}%)反映什麼風險變化？
+- 峰度值變化如何影響「極端報酬」的發生機率？{price_calc}是否會改變峰度值的解讀？
 
-4. **投資策略建議**：
-   - 針對這組數據特徵，給予投資人最具期望值的「進場點」與「出場點」建議
-   - 應設定怎樣的停利停損位置？(參考IQR:{advanced_stats.get('T周', {}).get('iqr', 'N/A')}%)
-   - 如何利用「偏度差值」({advanced_stats.get('T-1月', {}).get('mean_median_diff', 'N/A')}%)來篩選股票？
+### 4. 投資策略建議 ({price_calc})
+- 針對這組數據特徵，給予投資人最具期望值的「進場點」與「出場點」建議
+- 應設定怎樣的停利停損位置？(參考IQR:{advanced_stats.get('T周', {}).get('iqr', 'N/A')}%)
+- 如何利用「偏度差值」({advanced_stats.get('T-1月', {}).get('mean_median_diff', 'N/A')}%)來篩選股票？
+- **重要**：請特別說明{price_calc}對策略建議的影響，以及如果換成另一種計算方式，策略應如何調整？
 
-5. **年度比較洞察**：
-   - 與過往年度相比，{target_year}年的營收公告效應呈現什麼特殊現象？
-   - 從「上漲機率」趨勢(T-1月:{advanced_stats.get('T-1月', {}).get('win_rate', 'N/A')}% → T+1月:{advanced_stats.get('T+1月', {}).get('win_rate', 'N/A')}%)看策略有效性
+### 5. 年度比較洞察 ({price_calc})
+- 與過往年度相比，{target_year}年的營收公告效應呈現什麼特殊現象？
+- 從「上漲機率」趨勢(T-1月:{advanced_stats.get('T-1月', {}).get('win_rate', 'N/A')}% → T+1月:{advanced_stats.get('T+1月', {}).get('win_rate', 'N/A')}%)看策略有效性
+- 計算方式影響：{price_calc}的選擇是否會改變對年度效應的判斷？
+
+### 6. 計算方式專題分析
+- **{price_calc}的優缺點**：使用{price_label}計算漲跌幅有什麼優勢和劣勢？
+- **實務應用建議**：投資者應如何解讀{price_calc}的結果？需要注意哪些潛在偏差？
+- **極端值影響**：最高價計算是否會過度放大少數股票的表現？收盤價計算是否會低估潛在機會？
 """
     
     # 顯示提示詞
     col_prompt, col_actions = st.columns([3, 1])
     
     with col_prompt:
-        st.write("📋 **AI 分析指令 (含完整統計參數)**")
+        st.write(f"📋 **AI 分析指令 (含{price_calc}完整統計參數)**")
         st.code(prompt_text, language="text", height=400)
     
     with col_actions:
@@ -659,11 +715,11 @@ if not df.empty:
         st.link_button(
             "🔥 開啟 ChatGPT 分析", 
             f"https://chatgpt.com/?q={encoded_p}",
-            help="在新分頁開啟 ChatGPT 並自動帶入分析指令"
+            help=f"在新分頁開啟 ChatGPT 並自動帶入{price_calc}分析指令"
         )
         
         # DeepSeek 使用說明
-        st.info("""
+        st.info(f"""
         **使用 DeepSeek**:
         1. 複製上方指令
         2. 前往 [DeepSeek](https://chat.deepseek.com)
@@ -706,20 +762,20 @@ if not df.empty:
                                 
                                 if target_model:
                                     model = genai.GenerativeModel(target_model)
-                                    with st.spinner(f"🤖 AI 正在深度分析 {total_n} 筆樣本數據..."):
+                                    with st.spinner(f"🤖 AI 正在深度分析 {total_n} 筆樣本數據 ({price_calc})..."):
                                         response = model.generate_content(prompt_text)
                                         
-                                        st.success("✅ AI 診斷完成")
+                                        st.success(f"✅ AI 診斷完成 ({price_calc})")
                                         st.markdown("---")
-                                        st.markdown("## 📋 AI 專家診斷報告")
+                                        st.markdown(f"## 📋 AI 專家診斷報告 ({price_calc})")
                                         st.markdown(response.text)
                                         
                                         # 提供下載報告
-                                        report_text = f"# {target_year}年台股營收爆發分析報告\n\n" + response.text
+                                        report_text = f"# {target_year}年台股營收爆發分析報告 ({price_calc})\n\n" + response.text
                                         st.download_button(
                                             label="📥 下載 AI 報告",
                                             data=report_text.encode('utf-8'),
-                                            file_name=f"stock_revenue_ai_report_{target_year}.md",
+                                            file_name=f"stock_revenue_ai_report_{target_year}_{price_label}.md",
                                             mime="text/markdown"
                                         )
                                 else:
@@ -733,17 +789,57 @@ if not df.empty:
 
 else:
     st.warning("⚠️ 查無符合條件之樣本，請調整搜尋參數。")
-    st.info("💡 建議調整：降低門檻值、更換年度或放寬關鍵字搜尋")
+    st.info(f"""
+    💡 建議調整：
+    1. 降低門檻值
+    2. 更換年度
+    3. 放寬關鍵字搜尋
+    4. 嘗試不同的股價計算方式：{price_calc}
+    """)
 
+# ========== 6. 頁尾資訊 ==========
+st.markdown("---")
 # ========== 6. 頁尾資訊 ==========
 st.markdown("---")
 footer_col1, footer_col2, footer_col3 = st.columns(3)
 with footer_col1:
-    st.markdown("**版本**：公告行為研究室 4.3")
+    st.markdown(f"**版本**：公告行為研究室 4.4 ({price_calc})")
 with footer_col2:
-    st.markdown("**數據週期**：2020-2025")
+    st.markdown(f"**數據週期**：2020-2025")
 with footer_col3:
-    st.markdown("**開發者**：StockRevenueLab")
+    st.markdown(f"**計算方式**：{price_calc}")
+
+# ========== 7. 快速資源連結 ==========
+st.divider()
+st.markdown("### 🔗 快速資源連結")
+
+# 使用 markdown 創建您想要的格式
+st.markdown("""
+<div style="text-align: center;">
+    <table style="margin: 0 auto; border-collapse: separate; border-spacing: 30px 0;">
+        <tr>
+            <td style="text-align: center; vertical-align: top;">
+                <div style="font-size: 1.5em;">🛠️</div>
+                <a href="https://vocus.cc/article/695636c3fd89780001d873bd" target="_blank" style="text-decoration: none;">
+                    <b>⚙️ 環境與 AI 設定教學</b>
+                </a>
+            </td>
+            <td style="text-align: center; vertical-align: top;">
+                <div style="font-size: 1.5em;">📊</div>
+                <a href="https://vocus.cc/salon/grissomlin/room/695636ee0c0c0689d1e2aa9f" target="_blank" style="text-decoration: none;">
+                    <b>📖 儀表板功能詳解</b>
+                </a>
+            </td>
+            <td style="text-align: center; vertical-align: top;">
+                <div style="font-size: 1.5em;">🐙</div>
+                <a href="https://github.com/grissomlin/StockRevenueLab" target="_blank" style="text-decoration: none;">
+                    <b>💻 GitHub 專案原始碼</b>
+                </a>
+            </td>
+        </tr>
+    </table>
+</div>
+""", unsafe_allow_html=True)
 
 # 隱藏Streamlit預設元素
 hide_st_style = """

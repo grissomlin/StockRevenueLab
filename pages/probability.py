@@ -24,7 +24,7 @@ def get_engine():
 
 # ========== 3. 新增：獲取前後年度比較數據 ==========
 @st.cache_data(ttl=3600)
-def fetch_multi_year_data(stock_list, target_year):
+def fetch_multi_year_data(stock_list, target_year, price_field="year_close"):
     """獲取指定股票在前後年度的表現"""
     if not stock_list:
         return pd.DataFrame()
@@ -37,7 +37,7 @@ def fetch_multi_year_data(stock_list, target_year):
         SELECT 
             SPLIT_PART(symbol, '.', 1) as stock_id,
             year,
-            ((year_close - year_open) / year_open) * 100 as annual_return
+            (({price_field} - year_open) / year_open) * 100 as annual_return
         FROM stock_annual_k
         WHERE SPLIT_PART(symbol, '.', 1) IN ({stock_ids})
             AND year::integer BETWEEN {int(target_year)-2} AND {int(target_year)+1}
@@ -50,7 +50,7 @@ def fetch_multi_year_data(stock_list, target_year):
 
 # ========== 4. 修正：數據抓取引擎 (使用PERCENTILE_CONT計算中位數) ==========
 @st.cache_data(ttl=3600)
-def fetch_prob_data(year, metric_col, low, high):
+def fetch_prob_data(year, metric_col, low, high, price_field="year_close"):
     engine = get_engine()
     minguo_year = int(year) - 1911
     prev_minguo_year = minguo_year - 1
@@ -68,7 +68,7 @@ def fetch_prob_data(year, metric_col, low, high):
     ),
     perf_table AS (
         SELECT SPLIT_PART(symbol, '.', 1) as stock_id, 
-                ((year_close - year_open) / year_open)*100 as ret
+                (({price_field} - year_open) / year_open)*100 as ret
         FROM stock_annual_k WHERE year = '{year}'
     ),
     joined_data AS (
@@ -98,10 +98,10 @@ def fetch_prob_data(year, metric_col, low, high):
         st.error(f"❌ 數據查詢失敗: {str(e)}")
         # 如果中位數計算失敗，嘗試使用替代方法
         st.warning("⚠️ 嘗試使用替代查詢...")
-        return fetch_prob_data_alt(year, metric_col, low, high)
+        return fetch_prob_data_alt(year, metric_col, low, high, price_field)
 
 # ========== 4.1 替代方案：如果PERCENTILE_CONT不可用 ==========
-def fetch_prob_data_alt(year, metric_col, low, high):
+def fetch_prob_data_alt(year, metric_col, low, high, price_field="year_close"):
     """替代方案：使用Python計算中位數"""
     engine = get_engine()
     minguo_year = int(year) - 1911
@@ -121,7 +121,7 @@ def fetch_prob_data_alt(year, metric_col, low, high):
     ),
     perf_table AS (
         SELECT SPLIT_PART(symbol, '.', 1) as stock_id, 
-                ((year_close - year_open) / year_open)*100 as ret
+                (({price_field} - year_open) / year_open)*100 as ret
         FROM stock_annual_k WHERE year = '{year}'
     )
     SELECT h.hits, p.ret
@@ -219,6 +219,25 @@ with st.sidebar:
     
     metric_name = "年增率(YoY)" if study_metric == "yoy_pct" else "月增率(MoM)"
     
+    # 新增：股價計算方式選單
+    st.markdown("---")
+    price_calc = st.radio(
+        "📈 股價計算方式",
+        ["收盤價 (實戰版)", "最高價 (極限版)"],
+        help="收盤價：實際年度報酬 | 最高價：年度最大潛在漲幅",
+        index=0
+    )
+    
+    # 根據選擇決定 SQL 中的價格欄位
+    if price_calc == "收盤價 (實戰版)":
+        price_field = "year_close"
+        price_label = "收盤價"
+        st.info("使用年度收盤價計算，代表實際可實現的報酬")
+    else:
+        price_field = "year_high"  
+        price_label = "最高價"
+        st.warning("使用年度最高價計算，代表理論最大潛力漲幅")
+    
     growth_range = st.select_slider(
         f"設定{metric_name}爆發區間 (%)", 
         options=[-50, 0, 20, 50, 100, 150, 200, 300, 500, 1000], 
@@ -237,11 +256,12 @@ minguo_year = int(target_year) - 1911
 prev_minguo_year = minguo_year - 1
 
 # 獲取主要數據
-df_prob = fetch_prob_data(target_year, study_metric, growth_range[0], growth_range[1])
+df_prob = fetch_prob_data(target_year, study_metric, growth_range[0], growth_range[1], price_field)
 
 if not df_prob.empty:
     # ========== A. 核心數據顯示區 ==========
-    st.subheader(f"📊 {target_year}年：{metric_name}達標次數 vs 年度報酬統計")
+    st.subheader(f"📊 {target_year}年：{metric_name}達標次數 vs {price_label}年度報酬統計")
+    st.caption(f"計算方式：{price_calc} | 使用{price_label}計算年度漲幅")
     
     # 顯示基本統計
     total_stocks = df_prob["股票檔數"].sum()
@@ -283,7 +303,7 @@ if not df_prob.empty:
                 line=dict(color='darkblue', width=2)
             ))
             fig1.update_layout(
-                title=f"{metric_name}爆發次數 vs 年度表現",
+                title=f"{metric_name}爆發次數 vs {price_label}年度表現",
                 yaxis_title='漲幅 %',
                 height=400
             )
@@ -315,7 +335,7 @@ if not df_prob.empty:
                 pos_diff_percent = pos_diff_count / len(df_prob) * 100
                 
                 st.info(f"""
-                **平均數與中位數差異分析**：
+                **平均數與中位數差異分析（{price_calc}）**：
                 - {pos_diff_count}/{len(df_prob)} 個區間({pos_diff_percent:.1f}%) 平均數 > 中位數
                 - **表示多數區間存在右偏分佈**：少數股票漲幅極高，拉高了平均值
                 - 當差異越大，代表該爆發次數區間的**右尾效應**越明顯
@@ -375,9 +395,15 @@ if not df_prob.empty:
 ## 研究設定
 - **分析年度**: {target_year}年
 - **研究指標**: {metric_name}
+- **股價計算方式**: {price_calc} (使用{price_label}計算漲幅)
 - **爆發門檻**: {growth_range[0]}% 至 {growth_range[1]}%
 - **研究期間**: 前一年12月到{target_year}年11月（12個月份）
-- **股價計算**: {target_year}年度漲跌幅（年K線）
+- **股價計算**: {target_year}年度漲跌幅（年K線，使用{price_label}計算）
+
+## 價格計算方式說明
+- **{price_calc}**: {price_label}漲幅 = (({price_label} - 年開盤價) / 年開盤價) × 100%
+- 如果是「最高價 (極限版)」：代表年度最大潛在漲幅（理論最大值）
+- 如果是「收盤價 (實戰版)」：代表實際年度報酬（可實現報酬）
 
 ## 統計數據摘要
 {table_md}
@@ -385,19 +411,24 @@ if not df_prob.empty:
 ## 分析問題
 請以專業量化分析師的角度，針對以上數據回答以下問題：
 
-### 1. 相關性分析
+### 1. 計算方式影響分析
+- **{price_calc}的特性**：使用{price_label}計算有什麼優點和缺點？
+- **實務意義**：如果是「最高價」計算，代表什麼意義？如果是「收盤價」計算，又代表什麼意義？
+
+### 2. 相關性分析
 - 「爆發次數」與「平均年度漲幅」、「中位數漲幅」、「勝率(>20%)」之間是否存在正相關？
 - 從哪些數據點可以支持你的結論？
 
-### 2. 平均數與中位數差異分析
+### 3. 平均數與中位數差異分析
 - 哪些爆發次數區間的「平均-中位數」差異最大？這代表什麼意義？
 - 右尾效應（平均>中位）最明顯的區間是哪個？對投資策略有何啟示？
 
-### 3. 投資策略建議
+### 4. 投資策略建議（考慮計算方式）
 - 根據期望值（兼顧樣本數與漲幅），哪個「爆發次數區間」是最佳投資標的？
 - 對於不同風險偏好的投資者，你會建議關注哪個爆發次數區間？
+- **計算方式影響**：{price_calc}的結果應該如何應用在實際投資中？
 
-### 4. 實務操作建議
+### 5. 實務操作建議
 - 投資人應該如何利用這個統計規律來制定交易策略？
 - 需要搭配哪些其他指標或條件來提高勝率？
 """
@@ -453,7 +484,7 @@ if not df_prob.empty:
             
             if not stock_list_df.empty:
                 # 獲取前後年度數據
-                multi_year_df = fetch_multi_year_data(stock_list_df['stock_id'].tolist(), target_year)
+                multi_year_df = fetch_multi_year_data(stock_list_df['stock_id'].tolist(), target_year, price_field)
                 
                 if not multi_year_df.empty:
                     # 按爆發次數分組分析
@@ -523,7 +554,7 @@ if not df_prob.empty:
         SELECT h.stock_id as "股票代號", 
                COALESCE(m.stock_name, 'N/A') as "股票名稱",
                h.hits as "爆發次數",
-               ROUND(((k.year_close - k.year_open)/k.year_open*100)::numeric, 1) as "年度漲幅%",
+               ROUND(((k.{price_field} - k.year_open)/k.year_open*100)::numeric, 1) as "年度漲幅%",
                ROUND(AVG(m.{study_metric})::numeric, 1) as "平均增長%",
                STRING_AGG(DISTINCT CASE WHEN m.remark <> '-' AND m.remark <> '' THEN m.remark END, ' | ') as "關鍵備註"
         FROM hit_table h
@@ -531,7 +562,7 @@ if not df_prob.empty:
         LEFT JOIN monthly_revenue m ON h.stock_id = m.stock_id 
           AND (m.report_month LIKE '{minguo_year}_%' OR m.report_month = '{prev_minguo_year}_12')
         WHERE h.hits = {selected_hits}
-        GROUP BY h.stock_id, m.stock_name, k.year_close, k.year_open, h.hits
+        GROUP BY h.stock_id, m.stock_name, k.{price_field}, k.year_open, h.hits
         ORDER BY "年度漲幅%" DESC NULLS LAST
         LIMIT 100;
         """
@@ -542,6 +573,7 @@ if not df_prob.empty:
             
             if not detail_df.empty:
                 st.write(f"### 🏆 {target_year}年『營收爆發 {selected_hits} 次』股票清單（共{len(detail_df)}檔）")
+                st.caption(f"計算方式：{price_calc} | 使用{price_label}計算年度漲幅")
                 
                 # 名單統計
                 if len(detail_df) > 0:
@@ -562,7 +594,7 @@ if not df_prob.empty:
                 st.download_button(
                     label="📊 下載名單CSV",
                     data=detail_df.to_csv(index=False).encode('utf-8'),
-                    file_name=f'burst_{selected_hits}_stocks_{target_year}.csv',
+                    file_name=f'burst_{selected_hits}_stocks_{target_year}_{price_label}.csv',
                     mime='text/csv'
                 )
         except Exception as e:
@@ -578,12 +610,55 @@ else:
     4. 放寬增長範圍
     """)
 
+
 # ========== 8. 頁尾資訊 ==========
 st.markdown("---")
 footer_col1, footer_col2, footer_col3 = st.columns(3)
 with footer_col1:
-    st.markdown("**版本**：機率研究室 2.0")
+    st.markdown(f"**版本**：機率研究室 2.0 ({price_calc})")
 with footer_col2:
     st.markdown(f"**數據週期**：2019-2025")
 with footer_col3:
-    st.markdown("**研究重點**：爆發次數 vs 年度報酬")
+    st.markdown(f"**計算方式**：{price_label}漲幅")
+
+# ========== 9. 快速資源連結 ==========
+st.divider()
+st.markdown("### 🔗 快速資源連結")
+
+# 使用 markdown 創建您想要的格式
+st.markdown("""
+<div style="text-align: center;">
+    <table style="margin: 0 auto; border-collapse: separate; border-spacing: 30px 0;">
+        <tr>
+            <td style="text-align: center; vertical-align: top;">
+                <div style="font-size: 1.5em;">🛠️</div>
+                <a href="https://vocus.cc/article/695636c3fd89780001d873bd" target="_blank" style="text-decoration: none;">
+                    <b>⚙️ 環境與 AI 設定教學</b>
+                </a>
+            </td>
+            <td style="text-align: center; vertical-align: top;">
+                <div style="font-size: 1.5em;">📊</div>
+                <a href="https://vocus.cc/salon/grissomlin/room/695636ee0c0c0689d1e2aa9f" target="_blank" style="text-decoration: none;">
+                    <b>📖 儀表板功能詳解</b>
+                </a>
+            </td>
+            <td style="text-align: center; vertical-align: top;">
+                <div style="font-size: 1.5em;">🐙</div>
+                <a href="https://github.com/grissomlin/StockRevenueLab" target="_blank" style="text-decoration: none;">
+                    <b>💻 GitHub 專案原始碼</b>
+                </a>
+            </td>
+        </tr>
+    </table>
+</div>
+""", unsafe_allow_html=True)
+
+# 隱藏Streamlit預設元素
+hide_st_style = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+</style>
+"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
